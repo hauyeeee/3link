@@ -11,8 +11,9 @@ function Sales() {
   const [hasSearched, setHasSearched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
-
-  const COMMISSION_PER_ORDER = 50;
+  
+  // 👇 新增：動態佣金狀態
+  const [commissionRate, setCommissionRate] = useState(20);
 
   const handleSearch = async () => {
     const code = inputCode.toUpperCase();
@@ -20,17 +21,23 @@ function Sales() {
 
     setIsLoading(true);
     try {
+      // 1. 驗證密碼並取得該 Sales 專屬嘅佣金率
       const userDoc = await getDoc(doc(db, "sales_users", code));
       if (!userDoc.exists() || userDoc.data().password !== inputPassword) {
         setIsLoading(false);
         return alert("❌ 密碼錯誤 或 查無此人！請聯絡老闆。");
       }
+      
+      // 儲存佢嘅專屬佣金 (如果老闆未設，預設係 20)
+      setCommissionRate(userDoc.data().commissionRate || 20);
 
+      // 2. 搵單
       const qOrders = query(collection(db, "orders"), where("salesCode", "==", code));
       const snapshotOrders = await getDocs(qOrders);
       const orders = snapshotOrders.docs.map(d => ({ id: d.id, ...d.data() }));
       orders.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
       
+      // 3. 搵提現紀錄
       const qWithdraw = query(collection(db, "withdrawals"), where("salesCode", "==", code));
       const snapshotWithdraw = await getDocs(qWithdraw);
       const withdrawData = snapshotWithdraw.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -46,7 +53,8 @@ function Sales() {
     }
   };
 
-  const totalCommission = salesOrders.length * COMMISSION_PER_ORDER;
+  // 👇 升級：用專屬佣金率嚟計錢
+  const totalCommission = salesOrders.length * commissionRate;
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
   const availableBalance = totalCommission - totalWithdrawn;
 
@@ -93,6 +101,7 @@ function Sales() {
         <>
           <div style={{ background: '#fff3e0', padding: '20px', borderRadius: '8px', border: '1px solid #ff9800', marginBottom: '20px' }}>
             <h3 style={{ margin: '0 0 10px 0', color: '#e65100' }}>💰 財務總覽 ({inputCode.toUpperCase()})</h3>
+            <p style={{ margin: '5px 0' }}>專屬抽佣比率：<strong style={{ color: 'green' }}>¥ {commissionRate} / 單</strong></p>
             <p style={{ margin: '5px 0' }}>歷史總佣金：¥ {totalCommission}</p>
             <p style={{ margin: '5px 0' }}>已提現/處理中：¥ {totalWithdrawn}</p>
             <hr style={{ border: '0.5px solid #ffcc80' }}/>
@@ -110,9 +119,9 @@ function Sales() {
             <div key={order.id} style={{ border: '1px solid #eee', padding: '15px', borderRadius: '6px', marginBottom: '10px', background: '#fafafa', borderLeft: '4px solid #4caf50' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <strong style={{ fontSize: '16px', textDecoration: order.status.includes('取消') ? 'line-through' : 'none' }}>{order.routeDetail}</strong>
-                <span style={{ color: order.status.includes('取消') ? '#ccc' : 'green', fontWeight: 'bold' }}>+¥{order.status.includes('取消') ? '0' : COMMISSION_PER_ORDER}</span>
+                {/* 👇 顯示專屬佣金 */}
+                <span style={{ color: order.status.includes('取消') ? '#ccc' : 'green', fontWeight: 'bold' }}>+¥{order.status.includes('取消') ? '0' : commissionRate}</span>
               </div>
-              {/* 👇 Sales 版面都顯示返日期 */}
               <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>用車時間：{order.date || '未註明'} {order.time}</p>
               <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>
                 狀態：<span style={{ color: order.status.includes('取消') ? '#999' : '#1976d2', fontWeight: 'bold' }}>{order.status}</span>
