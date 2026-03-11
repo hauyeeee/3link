@@ -15,7 +15,7 @@ function App() {
 
   const [salesCode, setSalesCode] = useState('');
   const [category, setCategory] = useState('crossBorder'); 
-  const [date, setDate] = useState(''); // 👇 新增：用車日期
+  const [date, setDate] = useState(''); 
   const [time, setTime] = useState('14:00');
   const [routeKey, setRouteKey] = useState('深圳 (南山/福田/羅湖)');
   const [destination, setDestination] = useState('九龍');
@@ -23,7 +23,9 @@ function App() {
   const [hours, setHours] = useState(3);
   const [isRemote, setIsRemote] = useState(false);
   const [currency, setCurrency] = useState('RMB');
-  const [paymentMethod, setPaymentMethod] = useState('FPS');
+  
+  // 👇 預設並暫時只鎖定為 內地支付寶
+  const [paymentMethod, setPaymentMethod] = useState('AlipayCN');
 
   const [detailedAddress, setDetailedAddress] = useState('');
   const [luggageCount, setLuggageCount] = useState(0);
@@ -61,7 +63,6 @@ function App() {
   const displayDeposit = Math.round(finalRmbDeposit * rate);
 
   const handleSubmit = async () => {
-    // 👇 加入日期必填檢查
     if (!date) return alert("請選擇用車日期！");
     if (!detailedAddress.trim()) return alert("請填寫詳細上車/落車地址！");
     if (!receiptFile) return alert("麻煩請先上傳入數紙或截圖！");
@@ -78,10 +79,8 @@ function App() {
         salesCode: salesCode.toUpperCase() || '無',
         category: category,
         routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea})`,
-        
-        date: date, // 👇 儲存日期
+        date: date, 
         time: time,
-        
         detailedAddress: detailedAddress,
         luggageCount: parseInt(luggageCount, 10) || 0,
         remarks: remarks || '無',
@@ -175,7 +174,6 @@ function App() {
         <input type="text" placeholder="例如：深圳萬象天地 ➡️ 沙田第一城" value={detailedAddress} onChange={(e) => setDetailedAddress(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
       </div>
 
-      {/* 👇 將日期同時間並排顯示 */}
       <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>用車日期: <span style={{color:'red'}}>*</span></label>
@@ -204,24 +202,43 @@ function App() {
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
       </div>
 
-      <div style={{ background: '#fff9c4', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #fbc02d' }}>
-        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#f57f17' }}>💳 選擇付款方式:</label>
-        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px' }}>
+      {/* 👇 支付寶 QR Code 顯示區 (其他選項已隱藏) */}
+      <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #64b5f6' }}>
+        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#1565c0' }}>💳 付款方式:</label>
+        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#f5f5f5' }}>
+          <option value="AlipayCN">🇨🇳 內地支付寶 (Alipay)</option>
+          {/* 👇 將來想重開，剷走呢兩行 Comment 符號就得 
           <option value="FPS">🇭🇰 轉數快 (FPS)</option>
           <option value="AlipayHK">🇭🇰 AlipayHK (香港本地支付寶)</option>
-          <option value="AlipayCN">🇨🇳 內地支付寶 (Alipay)</option>
           <option value="MPay">🇲🇴 MPay (澳門錢包)</option>
+          */}
         </select>
-        <div style={{ padding: '10px', background: '#fff', borderRadius: '6px', border: '1px dashed #fbc02d' }}>
+
+        <div style={{ padding: '15px', background: '#fff', borderRadius: '6px', border: '1px dashed #64b5f6', textAlign: 'center' }}>
+          {paymentMethod === 'AlipayCN' && (
+            <div>
+              <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
+              
+              {/* 顯示 public 資料夾入面嘅 alipay.jpg */}
+              <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+              
+              {/* 提示客人準確嘅人民幣金額 */}
+              <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>
+                *請掃描上方 QR Code，轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。
+              </p>
+            </div>
+          )}
+          
+          {/* 👇 其他隱藏咗嘅付款資料
           {paymentMethod === 'FPS' && <p style={{ margin: 0 }}>FPS ID: <strong>1234567</strong><br/>戶口名稱: <strong>3LINK COMPANY LTD</strong></p>}
           {paymentMethod === 'AlipayHK' && <p style={{ margin: 0 }}>電話: <strong>9876 5432</strong><br/>戶口名稱: <strong>* CHAN</strong></p>}
-          {paymentMethod === 'AlipayCN' && <p style={{ margin: 0 }}>帳號: <strong>boss@3link.com</strong><br/>戶口名稱: <strong>* 大明</strong></p>}
           {paymentMethod === 'MPay' && <p style={{ margin: 0 }}>電話: <strong>6666 8888</strong></p>}
+          */}
         </div>
       </div>
 
       <div style={{ marginBottom: '20px' }}>
-        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>上傳入數紙 / 轉帳截圖: <span style={{color:'red'}}>*</span></label>
+        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>上傳付款截圖: <span style={{color:'red'}}>*</span></label>
         <input type="file" accept="image/*" onChange={(e) => setReceiptFile(e.target.files[0])} style={{ width: '100%', padding: '10px', border: '1px dashed #1976d2', borderRadius: '6px', background: '#f5f5f5' }} />
       </div>
       
