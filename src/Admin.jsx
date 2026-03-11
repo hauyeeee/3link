@@ -5,6 +5,13 @@ import { collection, onSnapshot, query, orderBy, doc, updateDoc, getDoc, setDoc,
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 function Admin() {
+  // 👇 新增：老闆登入系統狀態
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  
+  // ⚠️ 老闆請注意：呢度係你嘅專屬登入密碼，你可以隨時改！
+  const ADMIN_SECRET = "794509327"; 
+
   const [activeTab, setActiveTab] = useState('orders'); 
   const [orders, setOrders] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
@@ -22,7 +29,20 @@ function Admin() {
 
   const COMMISSION_PER_ORDER = 50; 
 
+  // 登入驗證功能
+  const handleLogin = () => {
+    if (passwordInput === ADMIN_SECRET) {
+      setIsLoggedIn(true);
+    } else {
+      alert("❌ 密碼錯誤！這不是你能進來的地方。");
+      setPasswordInput('');
+    }
+  };
+
   useEffect(() => {
+    // 👇 升級：如果未登入，絕對唔會去讀取任何資料 (防偷窺 + 慳 Quota)
+    if (!isLoggedIn) return; 
+
     const unsubOrders = onSnapshot(query(collection(db, "orders"), orderBy("createdAt", "desc")), snap => {
       setOrders(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -39,7 +59,7 @@ function Admin() {
       if (snap.exists()) setMarkup(snap.data().markup || 0);
     });
     return () => { unsubOrders(); unsubWithdraw(); unsubSales(); unsubDrivers(); };
-  }, []);
+  }, [isLoggedIn]); // 👈 依賴 isLoggedIn，登入咗先觸發
 
   const handleSaveMarkup = async () => {
     setIsSaving(true);
@@ -79,7 +99,6 @@ function Admin() {
     const SEND_KEY = "呢度填方糖SendKey"; 
     const qingQingDeposit = order.depositAmount - ((order.markup || 0) / 2);
     
-    // 👇 加入人數同車型去 WeChat 通知
     const vehicleText = order.requireEightSeater ? '8人大車' : '標準6人車';
     const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${vehicleText} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
 
@@ -144,9 +163,43 @@ function Admin() {
   thisMonthCommissionOrders.forEach(o => { salesLeaderboard[o.salesCode] = (salesLeaderboard[o.salesCode] || 0) + 1; });
   const sortedSales = Object.entries(salesLeaderboard).sort((a, b) => b[1] - a[1]);
 
+  // ==========================================
+  // 👇 如果未登入，顯示登入畫面 (鎖死介面)
+  // ==========================================
+  if (!isLoggedIn) {
+    return (
+      <div style={{ maxWidth: '400px', margin: '100px auto', padding: '30px', fontFamily: 'Arial, sans-serif', background: '#fff', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', textAlign: 'center' }}>
+        <h2 style={{ color: '#d32f2f', margin: '0 0 10px 0' }}>🔒 最高指揮中心</h2>
+        <p style={{ color: '#666', marginBottom: '25px', fontSize: '14px' }}>非授權人員請勿進入</p>
+        
+        <input 
+          type="password" 
+          placeholder="請輸入系統管理員密碼" 
+          value={passwordInput} 
+          onChange={(e) => setPasswordInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLogin()} // 撳 Enter 即刻登入
+          style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '20px', fontSize: '16px', textAlign: 'center', letterSpacing: '3px' }} 
+        />
+        
+        <button 
+          onClick={handleLogin} 
+          style={{ width: '100%', padding: '15px', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', transition: '0.3s' }}
+        >
+          進入系統
+        </button>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // 👇 登入成功後，先會顯示原本嘅 Dashboard
+  // ==========================================
   return (
     <div style={{ maxWidth: '900px', margin: '30px auto', padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-      <h2 style={{ color: '#1976d2', textAlign: 'center', marginBottom: '20px' }}>👨‍💼 三地通 - 老闆最高指揮中心</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <h2 style={{ color: '#1976d2', margin: 0 }}>👨‍💼 三地通 - 老闆最高指揮中心</h2>
+        <button onClick={() => setIsLoggedIn(false)} style={{ padding: '8px 15px', background: '#f5f5f5', border: '1px solid #ccc', borderRadius: '4px', cursor: 'pointer' }}>登出</button>
+      </div>
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '30px' }}>
         <button onClick={() => setActiveTab('orders')} style={{ flex: 1, padding: '15px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'orders' ? '#1976d2' : '#e0e0e0', color: activeTab === 'orders' ? 'white' : '#333' }}>📝 派單與操作</button>
@@ -182,7 +235,6 @@ function Admin() {
                 <div style={{ background: '#f0f8ff', padding: '10px', borderRadius: '6px', marginBottom: '10px', borderLeft: '4px solid #1976d2' }}>
                   <p style={{ margin: '0 0 5px 0', fontSize: '15px' }}>📍 <strong>詳細地址：</strong>{order.detailedAddress || '未填寫'}</p>
                   <p style={{ margin: '0 0 5px 0' }}>📅 <strong>用車時間：</strong>{order.date || '未註明'} {order.time}</p>
-                  {/* 👇 後台顯示人數同車型 */}
                   <p style={{ margin: '0 0 5px 0' }}>🧑‍🤝‍🧑 <strong>人數及車型：</strong>{order.passengerCount || 1} 人 ({order.requireEightSeater ? '8人大車' : '標準6人車'})</p>
                   <p style={{ margin: '0 0 5px 0' }}>🧳 <strong>行李：</strong>{order.luggageCount || 0} 件</p>
                   {order.remarks && order.remarks !== '無' && <p style={{ margin: '0', color: '#e65100' }}>📝 <strong>備註：</strong>{order.remarks}</p>}

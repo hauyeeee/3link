@@ -34,8 +34,6 @@ function App() {
 
   const [pickupAddress, setPickupAddress] = useState('');
   const [dropoffAddress, setDropoffAddress] = useState('');
-  
-  // 👇 新增：乘客人數 及 8人車選項
   const [passengerCount, setPassengerCount] = useState(1);
   const [requireEightSeater, setRequireEightSeater] = useState(false);
   const [luggageCount, setLuggageCount] = useState(0);
@@ -63,7 +61,6 @@ function App() {
     }
   }, [pickupAddress, dropoffAddress, category, destination]);
 
-  // 👇 自動偵測：超過 6 人強制轉 8 人車
   useEffect(() => {
     if (passengerCount > 6) {
       setRequireEightSeater(true);
@@ -81,7 +78,6 @@ function App() {
     category, routeKey, destination, time, isCrossSea, hours: parseInt(hours, 10), isRemote
   });
 
-  // 👇 計錢：如果揀咗 8 人車，加 ¥300
   const vehicleSurcharge = requireEightSeater ? 300 : 0;
   const finalRmbTotal = baseResult.total + globalMarkup + vehicleSurcharge;
   const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
@@ -126,11 +122,8 @@ function App() {
         date: date, 
         time: time,
         detailedAddress: `${pickupAddress} ➡️ ${dropoffAddress}`,
-        
-        // 👇 儲存人數及車型
         passengerCount: parseInt(passengerCount, 10) || 1,
         requireEightSeater: requireEightSeater,
-        
         luggageCount: parseInt(luggageCount, 10) || 0,
         remarks: remarks || '無',
         currency: currency,
@@ -157,12 +150,20 @@ function App() {
   return (
     <div style={{ maxWidth: '500px', margin: '40px auto', padding: '20px', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', borderRadius: '12px', backgroundColor: '#fff' }}>
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, color: '#333' }}>🚗 三地通落單</h2>
-        <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #1976d2', background: '#e3f2fd', color: '#1976d2', fontWeight: 'bold', cursor: 'pointer' }}>
-          <option value="RMB">🇨🇳 RMB (¥)</option>
-          <option value="HKD">🇭🇰 HKD (HK$)</option>
-          <option value="MOP">🇲🇴 MOP (MOP$)</option>
+      {/* 👇 升級：頂部品牌簡介區 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '2px solid #f0f0f0', paddingBottom: '15px' }}>
+        <div>
+          <h2 style={{ margin: '0 0 5px 0', color: '#1976d2', fontSize: '24px' }}>🚗 三地通 專車服務</h2>
+          <p style={{ margin: 0, color: '#666', fontSize: '14px', lineHeight: '1.4' }}>
+            專業中港澳跨境 • 本地接送 • 豪華包車<br/>
+            <span style={{ color: '#4caf50', fontWeight: 'bold' }}>✓ 點對點直達</span> &nbsp;
+            <span style={{ color: '#ff9800', fontWeight: 'bold' }}>✓ 豪華6/8人車</span>
+          </p>
+        </div>
+        <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={{ padding: '6px', borderRadius: '6px', border: '1px solid #1976d2', background: '#e3f2fd', color: '#1976d2', fontWeight: 'bold', cursor: 'pointer', outline: 'none' }}>
+          <option value="RMB">🇨🇳 RMB ¥</option>
+          <option value="HKD">🇭🇰 HKD $</option>
+          <option value="MOP">🇲🇴 MOP $</option>
         </select>
       </div>
       
@@ -240,7 +241,6 @@ function App() {
         </div>
       </div>
 
-      {/* 👇 新增：人數同行李並排 */}
       <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
         <div style={{ flex: 1 }}>
           <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>乘客人數: <span style={{color:'red'}}>*</span></label>
@@ -252,16 +252,9 @@ function App() {
         </div>
       </div>
 
-      {/* 👇 8人車附加選項 */}
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'flex', alignItems: 'center', background: '#f5f5f5', padding: '12px', borderRadius: '6px', border: '1px solid #ddd', cursor: passengerCount > 6 ? 'not-allowed' : 'pointer' }}>
-          <input 
-            type="checkbox" 
-            checked={requireEightSeater} 
-            disabled={passengerCount > 6} 
-            onChange={(e) => setRequireEightSeater(e.target.checked)} 
-            style={{ marginRight: '10px', width: '20px', height: '20px' }} 
-          />
+          <input type="checkbox" checked={requireEightSeater} disabled={passengerCount > 6} onChange={(e) => setRequireEightSeater(e.target.checked)} style={{ marginRight: '10px', width: '20px', height: '20px' }} />
           <span style={{ fontWeight: 'bold', color: '#333' }}>升級 8 人大車 (+¥300)</span>
           {passengerCount > 6 && <span style={{ marginLeft: '10px', color: '#d32f2f', fontSize: '12px', fontWeight: 'bold' }}>(超過6人必須使用)</span>}
         </label>
@@ -314,6 +307,33 @@ function App() {
       <button onClick={handleSubmit} disabled={isSubmitting} style={{ width: '100%', padding: '15px', fontSize: '18px', fontWeight: 'bold', background: isSubmitting ? '#ccc' : '#1976d2', color: '#fff', border: 'none', borderRadius: '8px', cursor: isSubmitting ? 'not-allowed' : 'pointer' }}>
         {isSubmitting ? '上傳及發送訂單中...' : '確認並提交訂單'}
       </button>
+
+      {/* 👇 升級：底部客服支援與社交連結 (Social Links) */}
+      <div style={{ marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', textAlign: 'center' }}>
+        <p style={{ margin: '0 0 15px 0', color: '#555', fontWeight: 'bold', fontSize: '16px' }}>💬 聯絡客服 / 關注我們</p>
+        
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
+          {/* ⚠️ 記住將以下 href 入面嘅電話號碼/Link 換做你自己真實嘅資料！ */}
+          
+          {/* WhatsApp: 將 85212345678 換做你嘅電話 */}
+          <a href="https://wa.me/85212345678" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
+            🟢 WhatsApp
+          </a>
+          
+          {/* WeChat (可以 Link 去你公眾號篇文，或者微信客服 QR Code 網頁) */}
+          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
+            💬 微信客服
+          </a>
+          
+          {/* Facebook Page */}
+          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
+            📘 Facebook
+          </a>
+        </div>
+        
+        <p style={{ marginTop: '20px', fontSize: '12px', color: '#aaa' }}>© 2026 三地通車隊. All rights reserved.</p>
+      </div>
+
     </div>
   );
 }
