@@ -32,7 +32,6 @@ function App() {
   const [currency, setCurrency] = useState('RMB');
   const [paymentMethod, setPaymentMethod] = useState('AlipayCN');
 
-  // 👇 升級：將地址分拆做上車同落車兩個 State
   const [pickupAddress, setPickupAddress] = useState('');
   const [dropoffAddress, setDropoffAddress] = useState('');
   
@@ -51,7 +50,6 @@ function App() {
     fetchMarkup();
   }, []);
 
-  // 👇 升級：檢查兩個地址是否包含港島字眼
   useEffect(() => {
     const fullAddress = (pickupAddress + ' ' + dropoffAddress).toLowerCase();
     const hasHKIsland = hkIslandKeywords.some(kw => fullAddress.includes(kw));
@@ -84,32 +82,23 @@ function App() {
 
   const handleSubmit = async () => {
     if (!date) return alert("請選擇用車日期！");
-    
-    // 👇 升級：確保兩個地址都有填寫
     if (!pickupAddress.trim() || !dropoffAddress.trim()) {
       return alert("請填齊詳細的「上車地址」及「落車地址」！");
     }
     
-    // 🛡️ 防偷雞攔截系統
     if (category === 'crossBorder') {
       const fullAddressToCheck = pickupAddress + ' ' + dropoffAddress;
-      
       if (routeKey.includes('深圳')) {
         const otherCities = ['廣州', '番禺', '東莞', '中山', '佛山', '珠海', '惠州', '澳門'];
         const foundCity = otherCities.find(kw => fullAddressToCheck.includes(kw));
-        if (foundCity) {
-          return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
-        }
+        if (foundCity) return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
       }
-
       if (!routeKey.includes('機場') && ['機場', '寶安', '白雲', 'T1', 'T2', '航站'].some(kw => fullAddressToCheck.includes(kw))) {
-        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) {
-          return;
-        }
+        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) return;
       }
     }
 
-    if (!receiptFile) return alert("麻煩請先上傳入數紙或截圖！");
+    if (!receiptFile) return alert("麻煩請先上傳付款截圖！");
     
     setIsSubmitting(true);
 
@@ -125,10 +114,7 @@ function App() {
         routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海自動偵測: ${isCrossSea || destination === '港島'})`,
         date: date, 
         time: time,
-        
-        // 👇 升級：將兩個地址合併成一個字串儲存，後台同微信完全唔使改 Code 就食得落！
         detailedAddress: `${pickupAddress} ➡️ ${dropoffAddress}`,
-        
         luggageCount: parseInt(luggageCount, 10) || 0,
         remarks: remarks || '無',
         currency: currency,
@@ -146,7 +132,6 @@ function App() {
       alert("✅ 成功落單！老闆會盡快確認並派車。");
       window.location.reload(); 
     } catch (error) {
-      console.error("落單失敗: ", error);
       alert("落單失敗，請聯絡客服。");
     } finally {
       setIsSubmitting(false);
@@ -208,7 +193,6 @@ function App() {
                 </select>
               </>
             )}
-            
             {(isCrossSea || destination === '港島') && (category !== 'charter') && (
                <div style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', fontWeight: 'bold' }}>
                  *系統偵測到地址位於過海範圍，已自動加上過海附加費 (+¥100)
@@ -218,7 +202,6 @@ function App() {
         )}
       </div>
 
-      {/* 👇 升級：將地址分拆為上下兩格 */}
       <div style={{ marginBottom: '15px', background: '#fffde7', padding: '15px', borderRadius: '8px', border: '1px solid #fff59d' }}>
         <div style={{ marginBottom: '15px' }}>
           <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px', color: '#f57f17' }}>📍 詳細上車地址: <span style={{color:'red'}}>*</span></label>
@@ -258,6 +241,7 @@ function App() {
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
       </div>
 
+      {/* 👇 支付寶付款及教學區塊大升級 */}
       <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #64b5f6' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#1565c0' }}>💳 付款方式:</label>
         <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#f5f5f5' }}>
@@ -268,9 +252,31 @@ function App() {
           {paymentMethod === 'AlipayCN' && (
             <div>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
-              <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
+              
+              <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '10px' }} />
+              
+              <br />
+              {/* 一鍵下載按鈕 */}
+              <a 
+                href="/alipay.jpg" 
+                download="3link_alipay_qr.jpg" 
+                style={{ display: 'inline-block', padding: '10px 20px', background: '#1976d2', color: '#fff', textDecoration: 'none', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' }}
+              >
+                ⬇️ 一鍵下載 QR Code
+              </a>
+
+              {/* 手機掃碼教學 */}
+              <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '6px', textAlign: 'left', border: '1px solid #eee' }}>
+                <p style={{ margin: '0 0 8px 0', fontWeight: 'bold', color: '#333' }}>📱 手機付款 3 步教學：</p>
+                <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '14px', color: '#555', lineHeight: '1.6' }}>
+                  <li>點擊上方按鈕 <strong>下載 QR Code</strong> 圖片。</li>
+                  <li>打開 <strong>支付寶 App</strong>，點擊頂部「掃一掃」。</li>
+                  <li>點選右下角 <strong>「相冊」</strong>，揀選剛下載的 QR Code 圖片即可轉帳。</li>
+                </ol>
+              </div>
+
               <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>
-                *請掃描上方 QR Code，轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。
+                *請轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。
               </p>
             </div>
           )}
