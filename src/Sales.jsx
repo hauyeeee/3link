@@ -12,7 +12,7 @@ function Sales() {
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   
-  // 👇 新增：動態佣金狀態
+  // Sales 預設的抽佣比率
   const [commissionRate, setCommissionRate] = useState(20);
 
   const handleSearch = async () => {
@@ -21,14 +21,13 @@ function Sales() {
 
     setIsLoading(true);
     try {
-      // 1. 驗證密碼並取得該 Sales 專屬嘅佣金率
+      // 1. 驗證密碼並取得該 Sales 預設佣金
       const userDoc = await getDoc(doc(db, "sales_users", code));
       if (!userDoc.exists() || userDoc.data().password !== inputPassword) {
         setIsLoading(false);
         return alert("❌ 密碼錯誤 或 查無此人！請聯絡老闆。");
       }
       
-      // 儲存佢嘅專屬佣金 (如果老闆未設，預設係 20)
       setCommissionRate(userDoc.data().commissionRate || 20);
 
       // 2. 搵單
@@ -53,8 +52,16 @@ function Sales() {
     }
   };
 
-  // 👇 升級：用專屬佣金率嚟計錢
-  const totalCommission = salesOrders.length * commissionRate;
+  // 👇 升級核心：逐張單去計佣金 (因為老闆可能會有特批數字)
+  const totalCommission = salesOrders.reduce((sum, order) => {
+    // 取消咗嘅單冇佣收
+    if (order.status.includes('取消')) return sum;
+    
+    // 如果老闆喺派單時有設定特批佣金，就用特批；否則用該 Sales 嘅預設佣金
+    const earnedForThisOrder = order.salesCommission !== undefined ? order.salesCommission : commissionRate;
+    return sum + earnedForThisOrder;
+  }, 0);
+
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
   const availableBalance = totalCommission - totalWithdrawn;
 
@@ -88,26 +95,48 @@ function Sales() {
       {!hasSearched ? (
         <div style={{ background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
-            <label>Sales Code:</label>
-            <input type="text" value={inputCode} onChange={(e) => setInputCode(e.target.value)} style={{ padding: '10px', fontSize: '16px', textTransform: 'uppercase' }} />
-            <label>密碼 (PIN):</label>
-            <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} style={{ padding: '10px', fontSize: '16px' }} />
+            <label style={{ fontWeight: 'bold' }}>Sales Code:</label>
+            <input 
+              type="text" 
+              value={inputCode} 
+              onChange={(e) => setInputCode(e.target.value)} 
+              style={{ padding: '12px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc', textTransform: 'uppercase' }} 
+            />
+            <label style={{ fontWeight: 'bold' }}>密碼 (PIN):</label>
+            <input 
+              type="password" 
+              value={inputPassword} 
+              onChange={(e) => setInputPassword(e.target.value)} 
+              style={{ padding: '12px', fontSize: '16px', borderRadius: '6px', border: '1px solid #ccc' }} 
+            />
           </div>
-          <button onClick={handleSearch} disabled={isLoading} style={{ width: '100%', padding: '12px', background: '#ff9800', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
+          <button 
+            onClick={handleSearch} 
+            disabled={isLoading} 
+            style={{ width: '100%', padding: '15px', background: '#ff9800', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer' }}
+          >
             {isLoading ? '驗證中...' : '登入系統'}
           </button>
         </div>
       ) : (
         <>
           <div style={{ background: '#fff3e0', padding: '20px', borderRadius: '8px', border: '1px solid #ff9800', marginBottom: '20px' }}>
-            <h3 style={{ margin: '0 0 10px 0', color: '#e65100' }}>💰 財務總覽 ({inputCode.toUpperCase()})</h3>
-            <p style={{ margin: '5px 0' }}>專屬抽佣比率：<strong style={{ color: 'green' }}>¥ {commissionRate} / 單</strong></p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: '0 0 10px 0', color: '#e65100' }}>💰 財務總覽 ({inputCode.toUpperCase()})</h3>
+              <button onClick={() => setHasSearched(false)} style={{ padding: '5px 10px', fontSize: '12px', cursor: 'pointer' }}>登出</button>
+            </div>
+            
+            <p style={{ margin: '5px 0' }}>預設抽佣比率：<strong style={{ color: 'green' }}>¥ {commissionRate} / 單</strong></p>
             <p style={{ margin: '5px 0' }}>歷史總佣金：¥ {totalCommission}</p>
             <p style={{ margin: '5px 0' }}>已提現/處理中：¥ {totalWithdrawn}</p>
-            <hr style={{ border: '0.5px solid #ffcc80' }}/>
+            <hr style={{ border: '0.5px solid #ffcc80', margin: '15px 0' }}/>
             <h2 style={{ margin: '10px 0', color: '#d32f2f' }}>可提現餘額：¥ {availableBalance}</h2>
             
-            <button onClick={handleWithdraw} disabled={isWithdrawing || availableBalance < 1000} style={{ width: '100%', padding: '12px', background: availableBalance >= 1000 ? '#4caf50' : '#ccc', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: availableBalance >= 1000 ? 'pointer' : 'not-allowed' }}>
+            <button 
+              onClick={handleWithdraw} 
+              disabled={isWithdrawing || availableBalance < 1000} 
+              style={{ width: '100%', padding: '15px', background: availableBalance >= 1000 ? '#4caf50' : '#ccc', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: availableBalance >= 1000 ? 'pointer' : 'not-allowed', marginTop: '10px' }}
+            >
               {isWithdrawing ? '提交中...' : availableBalance >= 1000 ? '申請提現 (全部)' : '未滿 ¥1000 無法提現'}
             </button>
             <p style={{ margin: '10px 0 0 0', fontSize: '12px', color: '#666', textAlign: 'center' }}>*提現申請需時約 3 個工作天處理</p>
@@ -115,26 +144,44 @@ function Sales() {
 
           <h3 style={{ color: '#333' }}>📋 你的訂單紀錄：</h3>
           {salesOrders.length === 0 && <p style={{color: '#666'}}>尚無接單紀錄</p>}
-          {salesOrders.map(order => (
-            <div key={order.id} style={{ border: '1px solid #eee', padding: '15px', borderRadius: '6px', marginBottom: '10px', background: '#fafafa', borderLeft: '4px solid #4caf50' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <strong style={{ fontSize: '16px', textDecoration: order.status.includes('取消') ? 'line-through' : 'none' }}>{order.routeDetail}</strong>
-                {/* 👇 顯示專屬佣金 */}
-                <span style={{ color: order.status.includes('取消') ? '#ccc' : 'green', fontWeight: 'bold' }}>+¥{order.status.includes('取消') ? '0' : commissionRate}</span>
+          {salesOrders.map(order => {
+            // 計算呢張單顯示嘅佣金
+            const displayComm = order.status.includes('取消') ? 0 : (order.salesCommission !== undefined ? order.salesCommission : commissionRate);
+            
+            return (
+              <div key={order.id} style={{ border: '1px solid #eee', padding: '15px', borderRadius: '6px', marginBottom: '10px', background: '#fafafa', borderLeft: '4px solid #4caf50' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                  <strong style={{ fontSize: '16px', textDecoration: order.status.includes('取消') ? 'line-through' : 'none' }}>
+                    {order.routeDetail}
+                  </strong>
+                  <span style={{ color: order.status.includes('取消') ? '#ccc' : 'green', fontWeight: 'bold', fontSize: '16px' }}>
+                    +¥{displayComm}
+                  </span>
+                </div>
+                
+                {/* 如果係特批佣金，加個小提示 */}
+                {order.salesCommission !== undefined && order.salesCommission !== commissionRate && !order.status.includes('取消') && (
+                  <p style={{ margin: '0 0 5px 0', color: '#e65100', fontSize: '12px', fontWeight: 'bold' }}>⭐ 老闆特批佣金</p>
+                )}
+
+                <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>用車時間：{order.date || '未註明'} {order.time}</p>
+                <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>
+                  狀態：<span style={{ color: order.status.includes('取消') ? '#999' : '#1976d2', fontWeight: 'bold' }}>{order.status}</span>
+                </p>
               </div>
-              <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>用車時間：{order.date || '未註明'} {order.time}</p>
-              <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>
-                狀態：<span style={{ color: order.status.includes('取消') ? '#999' : '#1976d2', fontWeight: 'bold' }}>{order.status}</span>
-              </p>
-            </div>
-          ))}
+            );
+          })}
 
           <h3 style={{ color: '#333', marginTop: '30px' }}>🧾 提現紀錄：</h3>
           {withdrawals.length === 0 && <p style={{color: '#666'}}>尚無提現紀錄</p>}
           {withdrawals.map(w => (
-            <div key={w.id} style={{ border: '1px solid #eee', padding: '10px', borderRadius: '6px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>提現 ¥{w.amount}</span>
-              <span style={{ color: w.status.includes('✅') ? 'green' : 'orange', fontWeight: 'bold' }}>{w.status}</span>
+            <div key={w.id} style={{ border: '1px solid #eee', padding: '15px', borderRadius: '6px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff' }}>
+              <div>
+                <span style={{ display: 'block', fontWeight: 'bold', fontSize: '16px' }}>提現 ¥{w.amount}</span>
+              </div>
+              <span style={{ color: w.status.includes('✅') ? 'green' : 'orange', fontWeight: 'bold', background: w.status.includes('✅') ? '#e8f5e9' : '#fff3e0', padding: '5px 10px', borderRadius: '4px' }}>
+                {w.status}
+              </span>
             </div>
           ))}
         </>

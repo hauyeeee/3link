@@ -8,8 +8,8 @@ function Admin() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   
-  // ⚠️ 老闆專屬密碼，隨時可以改
-  const ADMIN_SECRET = "888888123"; 
+  // ⚠️ 老闆專屬密碼
+  const ADMIN_SECRET = "888888"; 
 
   const [activeTab, setActiveTab] = useState('orders'); 
   const [orders, setOrders] = useState([]);
@@ -30,6 +30,9 @@ function Admin() {
   const [selectedDriverForOrder, setSelectedDriverForOrder] = useState({});
   const [balanceFiles, setBalanceFiles] = useState({});
   const [isUploadingBalance, setIsUploadingBalance] = useState(false);
+
+  // 👇 新增：用嚟暫存老闆為每張單特設嘅抽水設定
+  const [customFees, setCustomFees] = useState({});
 
   const handleLogin = () => {
     if (passwordInput === ADMIN_SECRET) {
@@ -91,7 +94,6 @@ function Admin() {
 
   const handleAddDriver = async () => {
     if(!newDriverName || !newDriverPwd) return alert("填齊司機名同密碼！");
-    // 將司機名作為 Document ID 儲存
     await setDoc(doc(db, "drivers", newDriverName), { 
       name: newDriverName, 
       password: newDriverPwd 
@@ -106,28 +108,37 @@ function Admin() {
     alert("已標記為已打款！");
   };
 
-  // 👇 派單給內部司機 (計糧：底價 - 100)
-  const handleAssignDriver = async (order) => {
+  // 👇 處理老闆輸入嘅自訂抽水數字
+  const handleFeeChange = (orderId, field, value) => {
+    const current = customFees[orderId] || {};
+    setCustomFees({
+      ...customFees,
+      [orderId]: { ...current, [field]: Number(value) }
+    });
+  };
+
+  // 👇 派單給內部司機 (用自訂抽水計糧)
+  const handleAssignDriver = async (order, feeState) => {
     const driverName = selectedDriverForOrder[order.id] || "老闆親自出馬";
     let driverEarnings = 0;
     
     if (driverName !== "老闆親自出馬") {
-      driverEarnings = (order.baseRmbPrice || 0) - 100; 
+      driverEarnings = (order.baseRmbPrice || 0) - feeState.driverFee; 
     }
 
     await updateDoc(doc(db, "orders", order.id), { 
       status: `✅ 內部派單 (${driverName})`,
       partnerId: driverName, 
-      partnerEarnings: driverEarnings 
+      partnerEarnings: driverEarnings,
+      salesCommission: feeState.salesComm, // 記錄實際批出嘅 Sales 佣金
+      platformFeeDeducted: feeState.driverFee
     });
-    alert(`已經將張單派畀：${driverName}！`);
+    alert(`已經將張單派畀：${driverName}！\n司機將會賺取: ¥${driverEarnings}`);
   };
 
-  // 👇 派單給晴晴 (計糧：底價 - 50 - Sales佣金)
-  const handleSendToQingQing = async (order) => {
-    const salesUser = salesUsers.find(u => u.id === order.salesCode);
-    const salesComm = salesUser ? (salesUser.commissionRate || 20) : 0;
-    const qingQingEarnings = (order.baseRmbPrice || 0) - 50 - salesComm;
+  // 👇 派單給晴晴 (用自訂抽水計糧)
+  const handleSendToQingQing = async (order, feeState) => {
+    const qingQingEarnings = (order.baseRmbPrice || 0) - feeState.qingqingFee - feeState.salesComm;
 
     const SEND_KEY = "呢度填方糖SendKey"; 
     const qingQingDeposit = order.depositAmount - ((order.markup || 0) / 2);
@@ -145,9 +156,11 @@ function Admin() {
       await updateDoc(doc(db, "orders", order.id), { 
         status: '📤 外判給晴晴',
         partnerId: 'QINGQING',
-        partnerEarnings: qingQingEarnings
+        partnerEarnings: qingQingEarnings,
+        salesCommission: feeState.salesComm, // 記錄實際批出嘅 Sales 佣金
+        platformFeeDeducted: feeState.qingqingFee
       });
-      alert("✅ 成功派畀晴晴！");
+      alert(`✅ 成功派畀晴晴！\n晴晴將會賺取: ¥${qingQingEarnings}`);
     } catch (e) { 
       alert("發送失敗！"); 
     }
@@ -213,7 +226,8 @@ function Admin() {
   const salesLeaderboard = {};
 
   thisMonthCommissionOrders.forEach(o => {
-    const rate = salesCommissionMap[o.salesCode] || 20;
+    // 升級：如果老闆派單時特批咗佣金，就用特批數字，否則用預設數字
+    const rate = o.salesCommission !== undefined ? o.salesCommission : (salesCommissionMap[o.salesCode] || 20);
     thisMonthTotalCommission += rate;
 
     if (!salesLeaderboard[o.salesCode]) {
@@ -285,7 +299,6 @@ function Admin() {
         </button>
       </div>
 
-      {/* 畫面 A：派單操作 */}
       {activeTab === 'orders' && (
         <div>
           <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #1976d2' }}>
@@ -314,6 +327,20 @@ function Admin() {
             const isCancelled = order.status.includes('取消');
             const bgColor = isCancelled ? '#f5f5f5' : (order.status.includes('內部') ? '#e8f5e9' : (order.status.includes('晴晴') ? '#fff3e0' : '#fff'));
             
+            // 👇 讀取呢張單嘅預設佣金
+            let defaultSalesComm = 0;
+            if (order.salesCode && order.salesCode !== '無') {
+              const salesUser = salesUsers.find(u => u.id === order.salesCode);
+              defaultSalesComm = salesUser ? (salesUser.commissionRate || 20) : 20;
+            }
+
+            // 組合出目前顯示嘅特批抽水設定
+            const feeState = {
+              driverFee: customFees[order.id]?.driverFee ?? 100,
+              qingqingFee: customFees[order.id]?.qingqingFee ?? 50,
+              salesComm: customFees[order.id]?.salesComm ?? defaultSalesComm
+            };
+
             return (
               <div key={order.id} style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '15px', marginBottom: '15px', background: bgColor, opacity: isCancelled ? 0.7 : 1 }}>
                 
@@ -331,6 +358,10 @@ function Admin() {
                 </div>
 
                 <p style={{ margin: '5px 0' }}>👤 Sales: {order.salesCode} | 💳 支付: {order.paymentMethod}</p>
+                <p style={{ margin: '5px 0', color: '#666', fontSize: '14px' }}>
+                  💡 系統底價(成本): ¥{order.baseRmbPrice} 
+                  {order.status !== '🔴 老闆處理中' && !isCancelled && ` | 已付司機/晴晴: ¥${order.partnerEarnings}`}
+                </p>
                 
                 <div style={{ background: isCancelled ? '#eee' : '#fff9c4', padding: '10px', borderRadius: '6px', margin: '10px 0', border: '1px dashed #fbc02d' }}>
                   <p style={{ margin: '0 0 5px 0' }}>總面價：<strong>{order.currency} {order.totalAmount}</strong> (已收訂金: {order.depositAmount})</p>
@@ -352,9 +383,26 @@ function Admin() {
                   </div>
                 </div>
                 
-                <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {order.status === '🔴 老闆處理中' && !isCancelled && (
-                    <>
+                {/* 👇 升級：老闆專屬派單調整控制台 */}
+                {order.status === '🔴 老闆處理中' && !isCancelled && (
+                  <div style={{ background: '#fff3e0', padding: '15px', borderRadius: '8px', marginBottom: '15px', border: '1px solid #ffcc80' }}>
+                    <h4 style={{ margin: '0 0 10px 0', color: '#e65100' }}>⚙️ 派單結算調整 (大時大節可減抽水)</h4>
+                    <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '15px' }}>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
+                        內部司機扣除平台費 (¥):
+                        <input type="number" value={feeState.driverFee} onChange={e => handleFeeChange(order.id, 'driverFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                      </label>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
+                        外判晴晴扣除平台費 (¥):
+                        <input type="number" value={feeState.qingqingFee} onChange={e => handleFeeChange(order.id, 'qingqingFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                      </label>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
+                        Sales 特批佣金 (¥):
+                        <input type="number" value={feeState.salesComm} disabled={order.salesCode === '無'} onChange={e => handleFeeChange(order.id, 'salesComm', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px', background: order.salesCode === '無' ? '#eee' : '#fff' }} />
+                      </label>
+                    </div>
+                    
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                       <div style={{ display: 'flex', border: '1px solid #4caf50', borderRadius: '4px', overflow: 'hidden' }}>
                         <select 
                           onChange={(e) => setSelectedDriverForOrder({...selectedDriverForOrder, [order.id]: e.target.value})} 
@@ -364,24 +412,26 @@ function Admin() {
                           {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                         <button 
-                          onClick={() => handleAssignDriver(order)} 
+                          onClick={() => handleAssignDriver(order, feeState)} 
                           style={{ padding: '8px 15px', background: '#4caf50', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
                         >
                           🙋‍♂️ 內部接單
                         </button>
                       </div>
                       <button 
-                        onClick={() => handleSendToQingQing(order)} 
+                        onClick={() => handleSendToQingQing(order, feeState)} 
                         style={{ padding: '8px 15px', background: '#ff9800', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                       >
                         📲 派畀晴晴
                       </button>
-                    </>
-                  )}
-                  
+                    </div>
+                  </div>
+                )}
+                
+                <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <div style={{ flex: 1 }}></div>
                   
-                  {!order.isBalancePaid && !isCancelled && (
+                  {!order.isBalancePaid && !isCancelled && order.status !== '🔴 老闆處理中' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#fff', padding: '5px', borderRadius: '4px', border: '1px solid #ccc' }}>
                       <input 
                         type="file" 
@@ -420,6 +470,7 @@ function Admin() {
           
           <div style={{ background: '#fff9c4', padding: '20px', borderRadius: '8px', border: '1px solid #fbc02d' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 提現申請審批 (Sales / 司機 / 晴晴)</h3>
+            {withdrawals.filter(w => w.status.includes('⏳')).length === 0 && <p>目前沒有待處理的提現。</p>}
             {withdrawals.filter(w => w.status.includes('⏳')).map(w => (
               <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '10px' }}>
                 <span>
@@ -459,7 +510,7 @@ function Admin() {
                   <span style={{ padding: '0 5px', color: '#666' }}>¥</span>
                   <input 
                     type="number" 
-                    placeholder="每單佣金" 
+                    placeholder="預設佣金" 
                     value={newSalesCommission} 
                     onChange={e=>setNewSalesCommission(e.target.value)} 
                     style={{ width: '100%', padding: '8px', border: 'none', outline: 'none' }}
@@ -475,7 +526,7 @@ function Admin() {
               <ul style={{ paddingLeft: '20px', margin: 0 }}>
                 {salesUsers.map(u => (
                   <li key={u.id} style={{ marginBottom: '5px' }}>
-                    <strong>{u.id}</strong> (密碼: {u.password}) - 每單抽佣: <strong style={{color: 'green'}}>¥{u.commissionRate || 20}</strong>
+                    <strong>{u.id}</strong> (密碼: {u.password}) - 預設每單: <strong style={{color: 'green'}}>¥{u.commissionRate || 20}</strong>
                   </li>
                 ))}
               </ul>
@@ -483,7 +534,7 @@ function Admin() {
 
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 15px 0' }}>🚕 開設 司機/晴晴 帳號</h3>
-              <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#666' }}>*請建立一個叫「QINGQING」的帳號畀晴晴登入睇數</p>
+              <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#666' }}>*請建立一個叫「QINGQING」的帳號畀晴晴登入</p>
               <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
                 <input 
                   type="text" 
@@ -541,6 +592,7 @@ function Admin() {
 
           <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>🏆 本月 Sales 龍虎榜</h3>
           <div style={{ background: '#fafafa', borderRadius: '8px', border: '1px solid #ddd', overflow: 'hidden' }}>
+            {sortedSales.length === 0 && <div style={{ padding: '15px' }}>暫無數據</div>}
             {sortedSales.map((sales, i) => (
               <div key={sales[0]} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee', background: i === 0 ? '#fff9c4' : 'transparent' }}>
                 <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
