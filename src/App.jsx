@@ -9,6 +9,13 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Admin from './Admin'; 
 import Sales from './Sales';
 
+const hkIslandKeywords = [
+  '港島', '中環', '上環', '西營盤', '堅尼地城', '西環', '半山', '山頂', '金鐘', 
+  '灣仔', '銅鑼灣', '天后', '炮台山', '北角', '鰂魚涌', '太古', '西灣河', '筲箕灣', 
+  '杏花邨', '柴灣', '小西灣', '薄扶林', '數碼港', '香港仔', '黃竹坑', '深水灣', 
+  '淺水灣', '赤柱', '大潭', '石澳', '跑馬地', '大坑', '海洋公園'
+];
+
 function App() {
   if (window.location.pathname === '/admin') return <Admin />;
   if (window.location.pathname === '/sales') return <Sales />;
@@ -19,15 +26,16 @@ function App() {
   const [time, setTime] = useState('14:00');
   const [routeKey, setRouteKey] = useState('深圳 (南山/福田/羅湖)');
   const [destination, setDestination] = useState('九龍');
-  const [isCrossSea, setIsCrossSea] = useState(false);
+  const [isCrossSea, setIsCrossSea] = useState(false); 
   const [hours, setHours] = useState(3);
   const [isRemote, setIsRemote] = useState(false);
   const [currency, setCurrency] = useState('RMB');
-  
-  // 👇 預設並暫時只鎖定為 內地支付寶
   const [paymentMethod, setPaymentMethod] = useState('AlipayCN');
 
-  const [detailedAddress, setDetailedAddress] = useState('');
+  // 👇 升級：將地址分拆做上車同落車兩個 State
+  const [pickupAddress, setPickupAddress] = useState('');
+  const [dropoffAddress, setDropoffAddress] = useState('');
+  
   const [luggageCount, setLuggageCount] = useState(0);
   const [remarks, setRemarks] = useState('');
 
@@ -42,6 +50,18 @@ function App() {
     };
     fetchMarkup();
   }, []);
+
+  // 👇 升級：檢查兩個地址是否包含港島字眼
+  useEffect(() => {
+    const fullAddress = (pickupAddress + ' ' + dropoffAddress).toLowerCase();
+    const hasHKIsland = hkIslandKeywords.some(kw => fullAddress.includes(kw));
+    
+    if (category === 'crossBorder') {
+      if (hasHKIsland && destination !== '港島') setDestination('港島');
+    } else if (category === 'local') {
+      setIsCrossSea(hasHKIsland);
+    }
+  }, [pickupAddress, dropoffAddress, category, destination]);
 
   const handleCategoryChange = (e) => {
     const newCategory = e.target.value;
@@ -64,7 +84,31 @@ function App() {
 
   const handleSubmit = async () => {
     if (!date) return alert("請選擇用車日期！");
-    if (!detailedAddress.trim()) return alert("請填寫詳細上車/落車地址！");
+    
+    // 👇 升級：確保兩個地址都有填寫
+    if (!pickupAddress.trim() || !dropoffAddress.trim()) {
+      return alert("請填齊詳細的「上車地址」及「落車地址」！");
+    }
+    
+    // 🛡️ 防偷雞攔截系統
+    if (category === 'crossBorder') {
+      const fullAddressToCheck = pickupAddress + ' ' + dropoffAddress;
+      
+      if (routeKey.includes('深圳')) {
+        const otherCities = ['廣州', '番禺', '東莞', '中山', '佛山', '珠海', '惠州', '澳門'];
+        const foundCity = otherCities.find(kw => fullAddressToCheck.includes(kw));
+        if (foundCity) {
+          return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
+        }
+      }
+
+      if (!routeKey.includes('機場') && ['機場', '寶安', '白雲', 'T1', 'T2', '航站'].some(kw => fullAddressToCheck.includes(kw))) {
+        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) {
+          return;
+        }
+      }
+    }
+
     if (!receiptFile) return alert("麻煩請先上傳入數紙或截圖！");
     
     setIsSubmitting(true);
@@ -78,10 +122,13 @@ function App() {
       const orderData = {
         salesCode: salesCode.toUpperCase() || '無',
         category: category,
-        routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea})`,
+        routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海自動偵測: ${isCrossSea || destination === '港島'})`,
         date: date, 
         time: time,
-        detailedAddress: detailedAddress,
+        
+        // 👇 升級：將兩個地址合併成一個字串儲存，後台同微信完全唔使改 Code 就食得落！
+        detailedAddress: `${pickupAddress} ➡️ ${dropoffAddress}`,
+        
         luggageCount: parseInt(luggageCount, 10) || 0,
         remarks: remarks || '無',
         currency: currency,
@@ -161,17 +208,26 @@ function App() {
                 </select>
               </>
             )}
-            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-              <input type="checkbox" checked={isCrossSea} onChange={(e) => setIsCrossSea(e.target.checked)} style={{ marginRight: '8px', width: '18px', height: '18px' }} />
-              額外過海路線 (+¥100)
-            </label>
+            
+            {(isCrossSea || destination === '港島') && (category !== 'charter') && (
+               <div style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', fontWeight: 'bold' }}>
+                 *系統偵測到地址位於過海範圍，已自動加上過海附加費 (+¥100)
+               </div>
+            )}
           </>
         )}
       </div>
 
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>詳細上車及落車地址: <span style={{color:'red'}}>*</span></label>
-        <input type="text" placeholder="例如：深圳萬象天地 ➡️ 沙田第一城" value={detailedAddress} onChange={(e) => setDetailedAddress(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+      {/* 👇 升級：將地址分拆為上下兩格 */}
+      <div style={{ marginBottom: '15px', background: '#fffde7', padding: '15px', borderRadius: '8px', border: '1px solid #fff59d' }}>
+        <div style={{ marginBottom: '15px' }}>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px', color: '#f57f17' }}>📍 詳細上車地址: <span style={{color:'red'}}>*</span></label>
+          <input type="text" placeholder="例如：深圳南山區萬象天地" value={pickupAddress} onChange={(e) => setPickupAddress(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px', color: '#f57f17' }}>🏁 詳細落車地址: <span style={{color:'red'}}>*</span></label>
+          <input type="text" placeholder="例如：香港沙田第一城12座" value={dropoffAddress} onChange={(e) => setDropoffAddress(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
@@ -202,38 +258,22 @@ function App() {
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
       </div>
 
-      {/* 👇 支付寶 QR Code 顯示區 (其他選項已隱藏) */}
       <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #64b5f6' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#1565c0' }}>💳 付款方式:</label>
         <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#f5f5f5' }}>
           <option value="AlipayCN">🇨🇳 內地支付寶 (Alipay)</option>
-          {/* 👇 將來想重開，剷走呢兩行 Comment 符號就得 
-          <option value="FPS">🇭🇰 轉數快 (FPS)</option>
-          <option value="AlipayHK">🇭🇰 AlipayHK (香港本地支付寶)</option>
-          <option value="MPay">🇲🇴 MPay (澳門錢包)</option>
-          */}
         </select>
 
         <div style={{ padding: '15px', background: '#fff', borderRadius: '6px', border: '1px dashed #64b5f6', textAlign: 'center' }}>
           {paymentMethod === 'AlipayCN' && (
             <div>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
-              
-              {/* 顯示 public 資料夾入面嘅 alipay.jpg */}
               <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-              
-              {/* 提示客人準確嘅人民幣金額 */}
               <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>
                 *請掃描上方 QR Code，轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。
               </p>
             </div>
           )}
-          
-          {/* 👇 其他隱藏咗嘅付款資料
-          {paymentMethod === 'FPS' && <p style={{ margin: 0 }}>FPS ID: <strong>1234567</strong><br/>戶口名稱: <strong>3LINK COMPANY LTD</strong></p>}
-          {paymentMethod === 'AlipayHK' && <p style={{ margin: 0 }}>電話: <strong>9876 5432</strong><br/>戶口名稱: <strong>* CHAN</strong></p>}
-          {paymentMethod === 'MPay' && <p style={{ margin: 0 }}>電話: <strong>6666 8888</strong></p>}
-          */}
         </div>
       </div>
 
