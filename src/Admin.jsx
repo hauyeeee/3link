@@ -1,13 +1,11 @@
 // src/Admin.jsx
 import React, { useState, useEffect } from 'react';
-// 👇 引入埋 storage 相關功能
 import { db, storage } from './firebase';
 import { collection, onSnapshot, query, orderBy, doc, updateDoc, getDoc, setDoc, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 function Admin() {
   const [activeTab, setActiveTab] = useState('orders'); 
-  
   const [orders, setOrders] = useState([]);
   const [withdrawals, setWithdrawals] = useState([]);
   const [salesUsers, setSalesUsers] = useState([]);
@@ -15,13 +13,10 @@ function Admin() {
   const [markup, setMarkup] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Form States
   const [newSalesCode, setNewSalesCode] = useState('');
   const [newSalesPwd, setNewSalesPwd] = useState('');
   const [newDriverName, setNewDriverName] = useState('');
   const [selectedDriverForOrder, setSelectedDriverForOrder] = useState({});
-  
-  // 👇 新增：用嚟裝住老闆選擇嘅「尾數入數紙」檔案 (每個 Order 獨立一個)
   const [balanceFiles, setBalanceFiles] = useState({});
   const [isUploadingBalance, setIsUploadingBalance] = useState(false);
 
@@ -43,19 +38,15 @@ function Admin() {
     getDoc(doc(db, "settings", "pricing")).then(snap => {
       if (snap.exists()) setMarkup(snap.data().markup || 0);
     });
-
     return () => { unsubOrders(); unsubWithdraw(); unsubSales(); unsubDrivers(); };
   }, []);
 
-  // --- 1. 面價與人事 Actions ---
   const handleSaveMarkup = async () => {
     setIsSaving(true);
     try {
       await setDoc(doc(db, "settings", "pricing"), { markup: Number(markup) });
       alert(`✅ 成功！客人依家落單會自動加 ¥${markup}！`);
-    } catch (e) {
-      alert("儲存失敗");
-    }
+    } catch (e) { alert("儲存失敗"); }
     setIsSaving(false);
   };
 
@@ -78,7 +69,6 @@ function Admin() {
     alert("已標記為已打款！");
   };
 
-  // --- 2. 訂單操作 Actions ---
   const handleAssignDriver = async (orderId) => {
     const driverName = selectedDriverForOrder[orderId] || "老闆親自出馬";
     await updateDoc(doc(db, "orders", orderId), { status: `✅ 內部派單 (${driverName})` });
@@ -88,7 +78,9 @@ function Admin() {
   const handleSendToQingQing = async (order) => {
     const SEND_KEY = "呢度填方糖SendKey"; 
     const qingQingDeposit = order.depositAmount - ((order.markup || 0) / 2);
-    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.time}\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
+    
+    // 👇 加入日期去 WeChat 通知
+    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
 
     try {
       await fetch(`https://sctapi.ftqq.com/${SEND_KEY}.send`, {
@@ -107,42 +99,28 @@ function Admin() {
     }
   };
 
-  // 👇 升級：處理尾數並上傳入數紙
   const handleSettleBalance = async (orderId) => {
     const file = balanceFiles[orderId];
-    if (!file) {
-      return alert("⚠️ 請先選擇尾數入數紙 / 轉帳截圖！");
-    }
-
+    if (!file) return alert("⚠️ 請先選擇尾數入數紙 / 轉帳截圖！");
     if (!window.confirm("✅ 確定要上傳此截圖並確認收妥尾數？")) return;
 
     setIsUploadingBalance(true);
     try {
-      // 1. 上傳相片去 Firebase Storage 嘅 balance_receipts 資料夾
       const fileName = `balance_receipts/${Date.now()}_${file.name}`;
       const storageRef = ref(storage, fileName);
       const snapshot = await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(snapshot.ref);
 
-      // 2. 更新資料庫
-      await updateDoc(doc(db, "orders", orderId), { 
-        isBalancePaid: true,
-        balanceReceiptUrl: downloadURL // 記低尾數截圖網址
-      });
-      
+      await updateDoc(doc(db, "orders", orderId), { isBalancePaid: true, balanceReceiptUrl: downloadURL });
       alert("✅ 尾數紀錄已更新並儲存截圖！");
-      
-      // 清空選擇咗嘅 File
       setBalanceFiles(prev => ({...prev, [orderId]: null}));
     } catch (error) {
-      console.error(error);
       alert("上傳失敗，請重試！");
     } finally {
       setIsUploadingBalance(false);
     }
   };
 
-  // --- 3. 📊 大數據計算邏輯 ---
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
@@ -162,9 +140,7 @@ function Admin() {
   const thisMonthTotalCommission = thisMonthCommissionOrders.length * COMMISSION_PER_ORDER;
 
   const salesLeaderboard = {};
-  thisMonthCommissionOrders.forEach(o => {
-    salesLeaderboard[o.salesCode] = (salesLeaderboard[o.salesCode] || 0) + 1;
-  });
+  thisMonthCommissionOrders.forEach(o => { salesLeaderboard[o.salesCode] = (salesLeaderboard[o.salesCode] || 0) + 1; });
   const sortedSales = Object.entries(salesLeaderboard).sort((a, b) => b[1] - a[1]);
 
   return (
@@ -177,9 +153,6 @@ function Admin() {
         <button onClick={() => setActiveTab('dashboard')} style={{ flex: 1, padding: '15px', fontSize: '18px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'dashboard' ? '#1976d2' : '#e0e0e0', color: activeTab === 'dashboard' ? 'white' : '#333' }}>📊 生意大數據</button>
       </div>
 
-      {/* ======================================= */}
-      {/* 畫面 A：派單操作 */}
-      {/* ======================================= */}
       {activeTab === 'orders' && (
         <div>
           <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #1976d2' }}>
@@ -187,15 +160,11 @@ function Admin() {
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
               <label>每張單在底價上增加：¥</label>
               <input type="number" value={markup} onChange={(e) => setMarkup(e.target.value)} style={{ padding: '8px', width: '100px', borderRadius: '4px', border: '1px solid #ccc', fontWeight: 'bold' }} />
-              <button onClick={handleSaveMarkup} disabled={isSaving} style={{ padding: '8px 15px', background: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                {isSaving ? '儲存中...' : '儲存生效'}
-              </button>
+              <button onClick={handleSaveMarkup} disabled={isSaving} style={{ padding: '8px 15px', background: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>儲存生效</button>
             </div>
           </div>
 
           <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>📥 訂單調度與追數中心</h3>
-          {orders.length === 0 ? <p>暫時未有訂單...</p> : null}
-
           {orders.map(order => {
             const balance = order.totalAmount - order.depositAmount;
             const isCancelled = order.status.includes('取消');
@@ -211,38 +180,27 @@ function Admin() {
                 
                 <div style={{ background: '#f0f8ff', padding: '10px', borderRadius: '6px', marginBottom: '10px', borderLeft: '4px solid #1976d2' }}>
                   <p style={{ margin: '0 0 5px 0', fontSize: '15px' }}>📍 <strong>詳細地址：</strong>{order.detailedAddress || '未填寫'}</p>
-                  <p style={{ margin: '0 0 5px 0' }}>🕒 <strong>用車時間：</strong>{order.time}</p>
+                  {/* 👇 顯示日期同時間 */}
+                  <p style={{ margin: '0 0 5px 0' }}>📅 <strong>用車時間：</strong>{order.date || '未註明'} {order.time}</p>
                   <p style={{ margin: '0 0 5px 0' }}>🧳 <strong>行李：</strong>{order.luggageCount || 0} 件</p>
                   {order.remarks && order.remarks !== '無' && <p style={{ margin: '0', color: '#e65100' }}>📝 <strong>備註：</strong>{order.remarks}</p>}
                 </div>
 
                 <p style={{ margin: '5px 0' }}>👤 Sales: {order.salesCode} | 💳 支付: {order.paymentMethod}</p>
                 
-                {/* 財務與入數紙顯示區塊 */}
                 <div style={{ background: isCancelled ? '#eee' : '#fff9c4', padding: '10px', borderRadius: '6px', margin: '10px 0', border: '1px dashed #fbc02d' }}>
                   <p style={{ margin: '0 0 5px 0' }}>總面價：<strong>{order.currency} {order.totalAmount}</strong> (已收訂金: {order.depositAmount})</p>
-                  
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                     <h4 style={{ margin: 0, color: '#d32f2f' }}>⚠️ 應收尾數：{order.currency} {balance}</h4>
-                    {order.isBalancePaid ? (
-                      <span style={{ background: '#4caf50', color: 'white', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>✅ 已收齊尾數</span>
-                    ) : (
-                      !isCancelled && <span style={{ background: '#f44336', color: 'white', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>未收尾數</span>
-                    )}
+                    {order.isBalancePaid ? <span style={{ background: '#4caf50', color: 'white', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>✅ 已收齊尾數</span> : (!isCancelled && <span style={{ background: '#f44336', color: 'white', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>未收尾數</span>)}
                   </div>
-
-                  {/* 顯示入數紙連結 */}
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <a href={order.receiptUrl} target="_blank" rel="noreferrer" style={{ fontSize: '13px', color: '#1976d2', textDecoration: 'underline' }}>🔗 查看訂金入數紙</a>
-                    {order.balanceReceiptUrl && (
-                      <a href={order.balanceReceiptUrl} target="_blank" rel="noreferrer" style={{ fontSize: '13px', color: '#2e7d32', textDecoration: 'underline' }}>🔗 查看尾數入數紙</a>
-                    )}
+                    {order.balanceReceiptUrl && <a href={order.balanceReceiptUrl} target="_blank" rel="noreferrer" style={{ fontSize: '13px', color: '#2e7d32', textDecoration: 'underline' }}>🔗 查看尾數入數紙</a>}
                   </div>
                 </div>
                 
-                {/* 操作按鈕區 */}
                 <div style={{ marginTop: '15px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  
                   {order.status === '🔴 老闆處理中' && !isCancelled && (
                     <>
                       <div style={{ display: 'flex', border: '1px solid #4caf50', borderRadius: '4px', overflow: 'hidden' }}>
@@ -255,33 +213,16 @@ function Admin() {
                       <button onClick={() => handleSendToQingQing(order)} style={{ padding: '8px 15px', background: '#ff9800', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>📲 派畀晴晴</button>
                     </>
                   )}
-
                   <div style={{ flex: 1 }}></div>
-
-                  {/* 👇 升級：尾數上傳區 */}
                   {!order.isBalancePaid && !isCancelled && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px', background: '#fff', padding: '5px', borderRadius: '4px', border: '1px solid #ccc' }}>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={(e) => setBalanceFiles({...balanceFiles, [order.id]: e.target.files[0]})}
-                        style={{ maxWidth: '180px', fontSize: '12px' }}
-                      />
-                      <button 
-                        onClick={() => handleSettleBalance(order.id)} 
-                        disabled={isUploadingBalance}
-                        style={{ padding: '6px 12px', background: isUploadingBalance ? '#ccc' : '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: isUploadingBalance ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '12px' }}
-                      >
+                      <input type="file" accept="image/*" onChange={(e) => setBalanceFiles({...balanceFiles, [order.id]: e.target.files[0]})} style={{ maxWidth: '180px', fontSize: '12px' }} />
+                      <button onClick={() => handleSettleBalance(order.id)} disabled={isUploadingBalance} style={{ padding: '6px 12px', background: isUploadingBalance ? '#ccc' : '#1976d2', color: 'white', border: 'none', borderRadius: '4px', cursor: isUploadingBalance ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
                         {isUploadingBalance ? '上傳中...' : '提交尾數截圖'}
                       </button>
                     </div>
                   )}
-
-                  {!isCancelled && (
-                    <button onClick={() => handleCancelOrder(order.id)} style={{ padding: '8px 15px', background: 'transparent', color: '#d32f2f', border: '1px solid #d32f2f', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                      ❌ 取消訂單
-                    </button>
-                  )}
+                  {!isCancelled && <button onClick={() => handleCancelOrder(order.id)} style={{ padding: '8px 15px', background: 'transparent', color: '#d32f2f', border: '1px solid #d32f2f', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>❌ 取消訂單</button>}
                 </div>
               </div>
             );
@@ -289,14 +230,10 @@ function Admin() {
         </div>
       )}
 
-      {/* ======================================= */}
-      {/* 畫面 B：人事與財務 */}
-      {/* ======================================= */}
       {activeTab === 'hr' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div style={{ background: '#fff9c4', padding: '20px', borderRadius: '8px', border: '1px solid #fbc02d' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 處理 Sales 提現申請</h3>
-            {withdrawals.filter(w => w.status.includes('⏳')).length === 0 ? <p>目前沒有待處理的提現。</p> : null}
             {withdrawals.filter(w => w.status.includes('⏳')).map(w => (
               <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '10px' }}>
                 <span><strong>{w.salesCode}</strong> 申請提現：<strong style={{color: 'red'}}>¥{w.amount}</strong></span>
@@ -307,32 +244,18 @@ function Admin() {
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 15px 0' }}>🧑‍💼 開設 Sales 帳號</h3>
-              <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
-                <input type="text" placeholder="Code (如 A05)" value={newSalesCode} onChange={e=>setNewSalesCode(e.target.value)} style={{ width: '40%', padding: '8px' }}/>
-                <input type="text" placeholder="設定密碼" value={newSalesPwd} onChange={e=>setNewSalesPwd(e.target.value)} style={{ width: '40%', padding: '8px' }}/>
-                <button onClick={handleAddSales} style={{ width: '20%', background: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>新增</button>
-              </div>
-              <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                {salesUsers.map(user => <li key={user.id}><strong>{user.id}</strong> (密碼: {user.password})</li>)}
-              </ul>
+              <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}><input type="text" placeholder="Code" value={newSalesCode} onChange={e=>setNewSalesCode(e.target.value)} style={{ width: '40%', padding: '8px' }}/><input type="text" placeholder="密碼" value={newSalesPwd} onChange={e=>setNewSalesPwd(e.target.value)} style={{ width: '40%', padding: '8px' }}/><button onClick={handleAddSales} style={{ width: '20%', background: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px' }}>新增</button></div>
+              <ul style={{ paddingLeft: '20px', margin: 0 }}>{salesUsers.map(u => <li key={u.id}><strong>{u.id}</strong> (密碼: {u.password})</li>)}</ul>
             </div>
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 15px 0' }}>🚕 車隊司機名單</h3>
-              <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
-                <input type="text" placeholder="司機名字" value={newDriverName} onChange={e=>setNewDriverName(e.target.value)} style={{ width: '75%', padding: '8px' }}/>
-                <button onClick={handleAddDriver} style={{ width: '25%', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>加入</button>
-              </div>
-              <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                {drivers.map(d => <li key={d.id}>{d.name}</li>)}
-              </ul>
+              <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}><input type="text" placeholder="司機名" value={newDriverName} onChange={e=>setNewDriverName(e.target.value)} style={{ width: '75%', padding: '8px' }}/><button onClick={handleAddDriver} style={{ width: '25%', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '4px' }}>加入</button></div>
+              <ul style={{ paddingLeft: '20px', margin: 0 }}>{drivers.map(d => <li key={d.id}>{d.name}</li>)}</ul>
             </div>
           </div>
         </div>
       )}
 
-      {/* ======================================= */}
-      {/* 畫面 C：📊 生意大數據 */}
-      {/* ======================================= */}
       {activeTab === 'dashboard' && (
         <div>
           <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>📅 本月實時戰況 ({currentMonth + 1}月)</h3>
@@ -340,32 +263,25 @@ function Admin() {
             <div style={{ flex: '1 1 250px', background: '#e3f2fd', padding: '20px', borderRadius: '12px', border: '1px solid #90caf9' }}>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#1565c0' }}>💰 本月總營業額 (折合人民幣)</p>
               <h2 style={{ margin: 0, color: '#1976d2', fontSize: '32px' }}>¥ {thisMonthRevenue}</h2>
-              <p style={{ margin: '5px 0 0 0', color: '#666' }}>總接單量：{thisMonthOrders.length} 單</p>
             </div>
             <div style={{ flex: '1 1 250px', background: '#fff3e0', padding: '20px', borderRadius: '12px', border: '1px solid #ffcc80' }}>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#e65100' }}>💸 本月應付佣金</p>
               <h2 style={{ margin: 0, color: '#f57c00', fontSize: '32px' }}>¥ {thisMonthTotalCommission}</h2>
-              <p style={{ margin: '5px 0 0 0', color: '#666' }}>來自 {thisMonthCommissionOrders.length} 張 Sales 單</p>
             </div>
             <div style={{ flex: '1 1 250px', background: '#e8f5e9', padding: '20px', borderRadius: '12px', border: '1px solid #a5d6a7' }}>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#2e7d32' }}>📈 本月扣佣後營收 (未扣車資)</p>
               <h2 style={{ margin: '0', color: '#4caf50', fontSize: '32px' }}>¥ {thisMonthRevenue - thisMonthTotalCommission}</h2>
             </div>
           </div>
-
           <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>🏆 本月 Sales 龍虎榜</h3>
-          {sortedSales.length === 0 ? <p>今個月暫時未有 Sales 開單...</p> : (
-            <div style={{ background: '#fafafa', borderRadius: '8px', border: '1px solid #ddd', overflow: 'hidden' }}>
-              {sortedSales.map((sales, index) => (
-                <div key={sales[0]} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee', background: index === 0 ? '#fff9c4' : 'transparent' }}>
-                  <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
-                    {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '👏'} {sales[0]}
-                  </span>
-                  <span style={{ fontSize: '18px' }}>{sales[1]} 單 <span style={{ color: 'green', fontWeight: 'bold' }}>(賺 ¥{sales[1] * COMMISSION_PER_ORDER})</span></span>
-                </div>
-              ))}
-            </div>
-          )}
+          <div style={{ background: '#fafafa', borderRadius: '8px', border: '1px solid #ddd', overflow: 'hidden' }}>
+            {sortedSales.map((sales, i) => (
+              <div key={sales[0]} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee', background: i === 0 ? '#fff9c4' : 'transparent' }}>
+                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '👏'} {sales[0]}</span>
+                <span style={{ fontSize: '18px' }}>{sales[1]} 單 <span style={{ color: 'green', fontWeight: 'bold' }}>(賺 ¥{sales[1] * COMMISSION_PER_ORDER})</span></span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

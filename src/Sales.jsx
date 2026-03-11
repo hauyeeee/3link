@@ -12,7 +12,7 @@ function Sales() {
   const [isLoading, setIsLoading] = useState(false);
   const [isWithdrawing, setIsWithdrawing] = useState(false);
 
-  const COMMISSION_PER_ORDER = 50; // 每單佣金
+  const COMMISSION_PER_ORDER = 50;
 
   const handleSearch = async () => {
     const code = inputCode.toUpperCase();
@@ -20,20 +20,17 @@ function Sales() {
 
     setIsLoading(true);
     try {
-      // 1. 去 Firebase 驗證密碼
       const userDoc = await getDoc(doc(db, "sales_users", code));
       if (!userDoc.exists() || userDoc.data().password !== inputPassword) {
         setIsLoading(false);
         return alert("❌ 密碼錯誤 或 查無此人！請聯絡老闆。");
       }
 
-      // 2. 搵單
       const qOrders = query(collection(db, "orders"), where("salesCode", "==", code));
       const snapshotOrders = await getDocs(qOrders);
       const orders = snapshotOrders.docs.map(d => ({ id: d.id, ...d.data() }));
       orders.sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0));
       
-      // 3. 搵提現紀錄
       const qWithdraw = query(collection(db, "withdrawals"), where("salesCode", "==", code));
       const snapshotWithdraw = await getDocs(qWithdraw);
       const withdrawData = snapshotWithdraw.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -43,22 +40,18 @@ function Sales() {
       setWithdrawals(withdrawData);
       setHasSearched(true);
     } catch (error) {
-      console.error(error);
       alert("查詢失敗，請檢查網絡。");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 財務計算
   const totalCommission = salesOrders.length * COMMISSION_PER_ORDER;
   const totalWithdrawn = withdrawals.reduce((sum, w) => sum + w.amount, 0);
   const availableBalance = totalCommission - totalWithdrawn;
 
-  // 申請提現
   const handleWithdraw = async () => {
     if (availableBalance < 1000) return alert("❌ 餘額必須滿 ¥1000 才可提現！");
-    
     if (!window.confirm(`確定要提現 ¥${availableBalance} 嗎？\n預計 3 個工作天內處理。`)) return;
     
     setIsWithdrawing(true);
@@ -70,7 +63,7 @@ function Sales() {
         createdAt: serverTimestamp()
       });
       alert("✅ 提現申請已提交！老闆會盡快處理。");
-      handleSearch(); // 重新整理數據
+      handleSearch();
     } catch (e) {
       alert("提交失敗");
     } finally {
@@ -88,7 +81,7 @@ function Sales() {
         <div style={{ background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '15px' }}>
             <label>Sales Code:</label>
-            <input type="text" value={inputCode} onChange={(e) => setInputCode(e.target.value)} style={{ padding: '10px', fontSize: '16px' }} />
+            <input type="text" value={inputCode} onChange={(e) => setInputCode(e.target.value)} style={{ padding: '10px', fontSize: '16px', textTransform: 'uppercase' }} />
             <label>密碼 (PIN):</label>
             <input type="password" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} style={{ padding: '10px', fontSize: '16px' }} />
           </div>
@@ -105,17 +98,29 @@ function Sales() {
             <hr style={{ border: '0.5px solid #ffcc80' }}/>
             <h2 style={{ margin: '10px 0', color: '#d32f2f' }}>可提現餘額：¥ {availableBalance}</h2>
             
-            <button 
-              onClick={handleWithdraw} 
-              disabled={isWithdrawing || availableBalance < 1000}
-              style={{ width: '100%', padding: '12px', background: availableBalance >= 1000 ? '#4caf50' : '#ccc', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: availableBalance >= 1000 ? 'pointer' : 'not-allowed' }}
-            >
+            <button onClick={handleWithdraw} disabled={isWithdrawing || availableBalance < 1000} style={{ width: '100%', padding: '12px', background: availableBalance >= 1000 ? '#4caf50' : '#ccc', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: availableBalance >= 1000 ? 'pointer' : 'not-allowed' }}>
               {isWithdrawing ? '提交中...' : availableBalance >= 1000 ? '申請提現 (全部)' : '未滿 ¥1000 無法提現'}
             </button>
             <p style={{ margin: '10px 0 0 0', fontSize: '12px', color: '#666', textAlign: 'center' }}>*提現申請需時約 3 個工作天處理</p>
           </div>
 
-          <h3 style={{ color: '#333' }}>🧾 提現紀錄：</h3>
+          <h3 style={{ color: '#333' }}>📋 你的訂單紀錄：</h3>
+          {salesOrders.length === 0 && <p style={{color: '#666'}}>尚無接單紀錄</p>}
+          {salesOrders.map(order => (
+            <div key={order.id} style={{ border: '1px solid #eee', padding: '15px', borderRadius: '6px', marginBottom: '10px', background: '#fafafa', borderLeft: '4px solid #4caf50' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <strong style={{ fontSize: '16px', textDecoration: order.status.includes('取消') ? 'line-through' : 'none' }}>{order.routeDetail}</strong>
+                <span style={{ color: order.status.includes('取消') ? '#ccc' : 'green', fontWeight: 'bold' }}>+¥{order.status.includes('取消') ? '0' : COMMISSION_PER_ORDER}</span>
+              </div>
+              {/* 👇 Sales 版面都顯示返日期 */}
+              <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>用車時間：{order.date || '未註明'} {order.time}</p>
+              <p style={{ margin: '5px 0 0 0', color: '#666', fontSize: '14px' }}>
+                狀態：<span style={{ color: order.status.includes('取消') ? '#999' : '#1976d2', fontWeight: 'bold' }}>{order.status}</span>
+              </p>
+            </div>
+          ))}
+
+          <h3 style={{ color: '#333', marginTop: '30px' }}>🧾 提現紀錄：</h3>
           {withdrawals.length === 0 && <p style={{color: '#666'}}>尚無提現紀錄</p>}
           {withdrawals.map(w => (
             <div key={w.id} style={{ border: '1px solid #eee', padding: '10px', borderRadius: '6px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between' }}>
