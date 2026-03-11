@@ -79,8 +79,9 @@ function Admin() {
     const SEND_KEY = "呢度填方糖SendKey"; 
     const qingQingDeposit = order.depositAmount - ((order.markup || 0) / 2);
     
-    // 👇 加入日期去 WeChat 通知
-    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
+    // 👇 加入人數同車型去 WeChat 通知
+    const vehicleText = order.requireEightSeater ? '8人大車' : '標準6人車';
+    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${vehicleText} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
 
     try {
       await fetch(`https://sctapi.ftqq.com/${SEND_KEY}.send`, {
@@ -180,8 +181,9 @@ function Admin() {
                 
                 <div style={{ background: '#f0f8ff', padding: '10px', borderRadius: '6px', marginBottom: '10px', borderLeft: '4px solid #1976d2' }}>
                   <p style={{ margin: '0 0 5px 0', fontSize: '15px' }}>📍 <strong>詳細地址：</strong>{order.detailedAddress || '未填寫'}</p>
-                  {/* 👇 顯示日期同時間 */}
                   <p style={{ margin: '0 0 5px 0' }}>📅 <strong>用車時間：</strong>{order.date || '未註明'} {order.time}</p>
+                  {/* 👇 後台顯示人數同車型 */}
+                  <p style={{ margin: '0 0 5px 0' }}>🧑‍🤝‍🧑 <strong>人數及車型：</strong>{order.passengerCount || 1} 人 ({order.requireEightSeater ? '8人大車' : '標準6人車'})</p>
                   <p style={{ margin: '0 0 5px 0' }}>🧳 <strong>行李：</strong>{order.luggageCount || 0} 件</p>
                   {order.remarks && order.remarks !== '無' && <p style={{ margin: '0', color: '#e65100' }}>📝 <strong>備註：</strong>{order.remarks}</p>}
                 </div>

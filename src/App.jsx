@@ -35,6 +35,9 @@ function App() {
   const [pickupAddress, setPickupAddress] = useState('');
   const [dropoffAddress, setDropoffAddress] = useState('');
   
+  // 👇 新增：乘客人數 及 8人車選項
+  const [passengerCount, setPassengerCount] = useState(1);
+  const [requireEightSeater, setRequireEightSeater] = useState(false);
   const [luggageCount, setLuggageCount] = useState(0);
   const [remarks, setRemarks] = useState('');
 
@@ -53,13 +56,19 @@ function App() {
   useEffect(() => {
     const fullAddress = (pickupAddress + ' ' + dropoffAddress).toLowerCase();
     const hasHKIsland = hkIslandKeywords.some(kw => fullAddress.includes(kw));
-    
     if (category === 'crossBorder') {
       if (hasHKIsland && destination !== '港島') setDestination('港島');
     } else if (category === 'local') {
       setIsCrossSea(hasHKIsland);
     }
   }, [pickupAddress, dropoffAddress, category, destination]);
+
+  // 👇 自動偵測：超過 6 人強制轉 8 人車
+  useEffect(() => {
+    if (passengerCount > 6) {
+      setRequireEightSeater(true);
+    }
+  }, [passengerCount]);
 
   const handleCategoryChange = (e) => {
     const newCategory = e.target.value;
@@ -72,7 +81,9 @@ function App() {
     category, routeKey, destination, time, isCrossSea, hours: parseInt(hours, 10), isRemote
   });
 
-  const finalRmbTotal = baseResult.total + globalMarkup;
+  // 👇 計錢：如果揀咗 8 人車，加 ¥300
+  const vehicleSurcharge = requireEightSeater ? 300 : 0;
+  const finalRmbTotal = baseResult.total + globalMarkup + vehicleSurcharge;
   const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
 
   const rate = pricingData.settings.exchangeRates[currency];
@@ -111,10 +122,15 @@ function App() {
       const orderData = {
         salesCode: salesCode.toUpperCase() || '無',
         category: category,
-        routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海自動偵測: ${isCrossSea || destination === '港島'})`,
+        routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea || destination === '港島'})`,
         date: date, 
         time: time,
         detailedAddress: `${pickupAddress} ➡️ ${dropoffAddress}`,
+        
+        // 👇 儲存人數及車型
+        passengerCount: parseInt(passengerCount, 10) || 1,
+        requireEightSeater: requireEightSeater,
+        
         luggageCount: parseInt(luggageCount, 10) || 0,
         remarks: remarks || '無',
         currency: currency,
@@ -195,7 +211,7 @@ function App() {
             )}
             {(isCrossSea || destination === '港島') && (category !== 'charter') && (
                <div style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', fontWeight: 'bold' }}>
-                 *系統偵測到地址位於過海範圍，已自動加上過海附加費 (+¥100)
+                 *系統自動偵測地址加上過海附加費 (+¥100)
                </div>
             )}
           </>
@@ -224,9 +240,31 @@ function App() {
         </div>
       </div>
 
+      {/* 👇 新增：人數同行李並排 */}
+      <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>乘客人數: <span style={{color:'red'}}>*</span></label>
+          <input type="number" min="1" max="8" value={passengerCount} onChange={(e) => setPassengerCount(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>行李數量:</label>
+          <input type="number" min="0" value={luggageCount} onChange={(e) => setLuggageCount(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+
+      {/* 👇 8人車附加選項 */}
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>行李數量:</label>
-        <input type="number" min="0" value={luggageCount} onChange={(e) => setLuggageCount(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        <label style={{ display: 'flex', alignItems: 'center', background: '#f5f5f5', padding: '12px', borderRadius: '6px', border: '1px solid #ddd', cursor: passengerCount > 6 ? 'not-allowed' : 'pointer' }}>
+          <input 
+            type="checkbox" 
+            checked={requireEightSeater} 
+            disabled={passengerCount > 6} 
+            onChange={(e) => setRequireEightSeater(e.target.checked)} 
+            style={{ marginRight: '10px', width: '20px', height: '20px' }} 
+          />
+          <span style={{ fontWeight: 'bold', color: '#333' }}>升級 8 人大車 (+¥300)</span>
+          {passengerCount > 6 && <span style={{ marginLeft: '10px', color: '#d32f2f', fontSize: '12px', fontWeight: 'bold' }}>(超過6人必須使用)</span>}
+        </label>
       </div>
 
       <div style={{ marginBottom: '20px' }}>
@@ -241,7 +279,6 @@ function App() {
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
       </div>
 
-      {/* 👇 支付寶付款及教學區塊大升級 */}
       <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #64b5f6' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#1565c0' }}>💳 付款方式:</label>
         <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#f5f5f5' }}>
@@ -252,20 +289,9 @@ function App() {
           {paymentMethod === 'AlipayCN' && (
             <div>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
-              
               <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '10px' }} />
-              
               <br />
-              {/* 一鍵下載按鈕 */}
-              <a 
-                href="/alipay.jpg" 
-                download="3link_alipay_qr.jpg" 
-                style={{ display: 'inline-block', padding: '10px 20px', background: '#1976d2', color: '#fff', textDecoration: 'none', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' }}
-              >
-                ⬇️ 一鍵下載 QR Code
-              </a>
-
-              {/* 手機掃碼教學 */}
+              <a href="/alipay.jpg" download="3link_alipay_qr.jpg" style={{ display: 'inline-block', padding: '10px 20px', background: '#1976d2', color: '#fff', textDecoration: 'none', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' }}>⬇️ 一鍵下載 QR Code</a>
               <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '6px', textAlign: 'left', border: '1px solid #eee' }}>
                 <p style={{ margin: '0 0 8px 0', fontWeight: 'bold', color: '#333' }}>📱 手機付款 3 步教學：</p>
                 <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '14px', color: '#555', lineHeight: '1.6' }}>
@@ -274,10 +300,7 @@ function App() {
                   <li>點選右下角 <strong>「相冊」</strong>，揀選剛下載的 QR Code 圖片即可轉帳。</li>
                 </ol>
               </div>
-
-              <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>
-                *請轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。
-              </p>
+              <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>*請轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。</p>
             </div>
           )}
         </div>
