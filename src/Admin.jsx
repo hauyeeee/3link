@@ -7,7 +7,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 function Admin() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
-  const ADMIN_SECRET = "888888"; 
+  const ADMIN_SECRET = "888888123"; 
 
   const [activeTab, setActiveTab] = useState('orders'); 
   const [orders, setOrders] = useState([]);

@@ -316,17 +316,17 @@ function App() {
           {/* ⚠️ 記住將以下 href 入面嘅電話號碼/Link 換做你自己真實嘅資料！ */}
           
           {/* WhatsApp: 將 85212345678 換做你嘅電話 */}
-          <a href="https://wa.me/85212345678" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
+          <a href="https://wa.me/85268786834" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
             🟢 WhatsApp
           </a>
           
           {/* WeChat (可以 Link 去你公眾號篇文，或者微信客服 QR Code 網頁) */}
-          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
+          <a href="https://www.facebook.com/3linkapp/" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
             💬 微信客服
           </a>
           
           {/* Facebook Page */}
-          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
+          <a href="https://www.facebook.com/3linkapp/" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
             📘 Facebook
           </a>
         </div>
