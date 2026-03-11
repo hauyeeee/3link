@@ -1,20 +1,18 @@
 // src/App.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { pricingData } from './pricingData';
 import { calculatePrice } from './priceEngine';
-
-// 👇 引入 Firebase 功能
 import { db, storage } from './firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDoc, doc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-import Admin from './Admin';
+import Admin from './Admin'; 
+import Sales from './Sales';
 
 function App() {
-  // 👇 加入呢段隱藏秘道邏輯：如果網址包含 /admin，就直接顯示後台
-  if (window.location.pathname === '/admin') {
-    return <Admin />;
-  }
+  if (window.location.pathname === '/admin') return <Admin />;
+  if (window.location.pathname === '/sales') return <Sales />;
+
   const [salesCode, setSalesCode] = useState('');
   const [category, setCategory] = useState('crossBorder'); 
   const [time, setTime] = useState('14:00');
@@ -24,10 +22,24 @@ function App() {
   const [hours, setHours] = useState(3);
   const [isRemote, setIsRemote] = useState(false);
   const [currency, setCurrency] = useState('RMB');
+  const [paymentMethod, setPaymentMethod] = useState('FPS');
 
-  // 👇 新增：檔案上傳與載入狀態
+  // 👇 新增：地址、行李、備註狀態
+  const [detailedAddress, setDetailedAddress] = useState('');
+  const [luggageCount, setLuggageCount] = useState(0);
+  const [remarks, setRemarks] = useState('');
+
   const [receiptFile, setReceiptFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [globalMarkup, setGlobalMarkup] = useState(0);
+
+  useEffect(() => {
+    const fetchMarkup = async () => {
+      const snap = await getDoc(doc(db, "settings", "pricing"));
+      if (snap.exists()) setGlobalMarkup(snap.data().markup || 0);
+    };
+    fetchMarkup();
+  }, []);
 
   const handleCategoryChange = (e) => {
     const newCategory = e.target.value;
@@ -40,55 +52,55 @@ function App() {
     category, routeKey, destination, time, isCrossSea, hours: parseInt(hours, 10), isRemote
   });
 
+  const finalRmbTotal = baseResult.total + globalMarkup;
+  const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
+
   const rate = pricingData.settings.exchangeRates[currency];
   const symbol = pricingData.settings.currencySymbols[currency];
-  const displayTotal = Math.round(baseResult.total * rate);
-  const displayDeposit = Math.round(baseResult.deposit * rate);
+  const displayTotal = Math.round(finalRmbTotal * rate);
+  const displayDeposit = Math.round(finalRmbDeposit * rate);
 
-  // 👇 新增：處理提交訂單
   const handleSubmit = async () => {
-    if (!receiptFile) {
-      alert("麻煩請先上傳入數紙或截圖！");
-      return;
-    }
-
+    // 👇 確保客人有填詳細地址
+    if (!detailedAddress.trim()) return alert("請填寫詳細上車/落車地址！");
+    if (!receiptFile) return alert("麻煩請先上傳入數紙或截圖！");
+    
     setIsSubmitting(true);
 
     try {
-      // 1. 上傳圖片去 Firebase Storage
-      // 幫張相改個獨一無二嘅名 (加個時間戳)
       const fileName = `receipts/${Date.now()}_${receiptFile.name}`;
       const storageRef = ref(storage, fileName);
-      
-      // 開始上傳
       const snapshot = await uploadBytes(storageRef, receiptFile);
-      // 攞返張相嘅下載網址
       const downloadURL = await getDownloadURL(snapshot.ref);
 
-      // 2. 將訂單資料寫入 Firestore 資料庫
       const orderData = {
-        salesCode: salesCode || '無',
+        salesCode: salesCode.toUpperCase() || '無',
         category: category,
         routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea})`,
         time: time,
+        
+        // 👇 將新資料寫入 Firebase
+        detailedAddress: detailedAddress,
+        luggageCount: parseInt(luggageCount, 10) || 0,
+        remarks: remarks || '無',
+
         currency: currency,
+        markup: globalMarkup,
+        paymentMethod: paymentMethod,
         totalAmount: displayTotal,
         depositAmount: displayDeposit,
         receiptUrl: downloadURL,
-        status: '🔴 老闆處理中', // 預設狀態，等你入後台派單
+        status: '🔴 老闆處理中',
+        isBalancePaid: false,
         createdAt: serverTimestamp()
       };
 
       await addDoc(collection(db, "orders"), orderData);
-
       alert("✅ 成功落單！老闆會盡快確認並派車。");
-      
-      // 成功後清空 Form (可選)
       window.location.reload(); 
-
     } catch (error) {
       console.error("落單失敗: ", error);
-      alert("落單失敗，請檢查網絡或聯絡客服。");
+      alert("落單失敗，請聯絡客服。");
     } finally {
       setIsSubmitting(false);
     }
@@ -157,35 +169,69 @@ function App() {
         )}
       </div>
 
+      {/* 👇 新增：詳細地址、行李、備註區塊 */}
+      <div style={{ marginBottom: '15px' }}>
+        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>詳細上車及落車地址: <span style={{color:'red'}}>*</span></label>
+        <input 
+          type="text" 
+          placeholder="例如：深圳萬象天地 ➡️ 沙田第一城" 
+          value={detailedAddress} 
+          onChange={(e) => setDetailedAddress(e.target.value)} 
+          style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} 
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>用車時間: <span style={{color:'red'}}>*</span></label>
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>行李數量:</label>
+          <input type="number" min="0" value={luggageCount} onChange={(e) => setLuggageCount(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+
       <div style={{ marginBottom: '20px' }}>
-        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>用車時間 (00:00-06:00 自動加深夜費): </label>
-        <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>備註 (Note):</label>
+        <textarea 
+          placeholder="例如：需要BB車、自備輪椅、帶寵物..." 
+          value={remarks} 
+          onChange={(e) => setRemarks(e.target.value)} 
+          style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', minHeight: '80px', resize: 'vertical' }} 
+        />
       </div>
 
       <hr style={{ border: '0.5px solid #eee', margin: '20px 0' }} />
       
+      {/* 總結算區 */}
       <div style={{ background: '#e8f5e9', borderLeft: '5px solid #4caf50', padding: '15px', borderRadius: '4px', marginBottom: '20px' }}>
         <h3 style={{ margin: '0 0 10px 0', color: '#2e7d32' }}>應付總額: {symbol} {displayTotal}</h3>
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
-        <p style={{ margin: '10px 0 0 0', fontSize: '14px', color: '#555' }}>請入數至 FPS: 1234567 或 PayMe: 98765432</p>
       </div>
 
-      {/* 👇 新增：上傳入數紙區域 */}
+      <div style={{ background: '#fff9c4', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #fbc02d' }}>
+        <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#f57f17' }}>💳 選擇付款方式:</label>
+        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px' }}>
+          <option value="FPS">🇭🇰 轉數快 (FPS)</option>
+          <option value="AlipayHK">🇭🇰 AlipayHK (香港本地支付寶)</option>
+          <option value="AlipayCN">🇨🇳 內地支付寶 (Alipay)</option>
+          <option value="MPay">🇲🇴 MPay (澳門錢包)</option>
+        </select>
+        <div style={{ padding: '10px', background: '#fff', borderRadius: '6px', border: '1px dashed #fbc02d' }}>
+          {paymentMethod === 'FPS' && <p style={{ margin: 0 }}>FPS ID: <strong>1234567</strong><br/>戶口名稱: <strong>3LINK COMPANY LTD</strong></p>}
+          {paymentMethod === 'AlipayHK' && <p style={{ margin: 0 }}>電話: <strong>9876 5432</strong><br/>戶口名稱: <strong>* CHAN</strong></p>}
+          {paymentMethod === 'AlipayCN' && <p style={{ margin: 0 }}>帳號: <strong>boss@3link.com</strong><br/>戶口名稱: <strong>* 大明</strong></p>}
+          {paymentMethod === 'MPay' && <p style={{ margin: 0 }}>電話: <strong>6666 8888</strong></p>}
+        </div>
+      </div>
+
       <div style={{ marginBottom: '20px' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>上傳入數紙 / 轉帳截圖: <span style={{color:'red'}}>*</span></label>
-        <input 
-          type="file" 
-          accept="image/*" 
-          onChange={(e) => setReceiptFile(e.target.files[0])} 
-          style={{ width: '100%', padding: '10px', border: '1px dashed #1976d2', borderRadius: '6px', background: '#f5f5f5' }} 
-        />
+        <input type="file" accept="image/*" onChange={(e) => setReceiptFile(e.target.files[0])} style={{ width: '100%', padding: '10px', border: '1px dashed #1976d2', borderRadius: '6px', background: '#f5f5f5' }} />
       </div>
       
-      <button 
-        onClick={handleSubmit}
-        disabled={isSubmitting}
-        style={{ width: '100%', padding: '15px', fontSize: '18px', fontWeight: 'bold', background: isSubmitting ? '#ccc' : '#1976d2', color: '#fff', border: 'none', borderRadius: '8px', cursor: isSubmitting ? 'not-allowed' : 'pointer', transition: '0.3s' }}
-      >
+      <button onClick={handleSubmit} disabled={isSubmitting} style={{ width: '100%', padding: '15px', fontSize: '18px', fontWeight: 'bold', background: isSubmitting ? '#ccc' : '#1976d2', color: '#fff', border: 'none', borderRadius: '8px', cursor: isSubmitting ? 'not-allowed' : 'pointer' }}>
         {isSubmitting ? '上傳及發送訂單中...' : '確認並提交訂單'}
       </button>
     </div>
