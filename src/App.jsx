@@ -8,7 +8,9 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import Admin from './Admin'; 
 import Sales from './Sales';
+import Driver from './Driver'; 
 
+// 港島常見地名關鍵字 (用作自動觸發過海費)
 const hkIslandKeywords = [
   '港島', '中環', '上環', '西營盤', '堅尼地城', '西環', '半山', '山頂', '金鐘', 
   '灣仔', '銅鑼灣', '天后', '炮台山', '北角', '鰂魚涌', '太古', '西灣河', '筲箕灣', 
@@ -17,8 +19,10 @@ const hkIslandKeywords = [
 ];
 
 function App() {
+  // 秘道分流器
   if (window.location.pathname === '/admin') return <Admin />;
   if (window.location.pathname === '/sales') return <Sales />;
+  if (window.location.pathname === '/driver') return <Driver />; 
 
   const [salesCode, setSalesCode] = useState('');
   const [category, setCategory] = useState('crossBorder'); 
@@ -43,6 +47,7 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [globalMarkup, setGlobalMarkup] = useState(0);
 
+  // 讀取老闆全局加價
   useEffect(() => {
     const fetchMarkup = async () => {
       const snap = await getDoc(doc(db, "settings", "pricing"));
@@ -51,9 +56,11 @@ function App() {
     fetchMarkup();
   }, []);
 
+  // 自動偵測過海
   useEffect(() => {
     const fullAddress = (pickupAddress + ' ' + dropoffAddress).toLowerCase();
     const hasHKIsland = hkIslandKeywords.some(kw => fullAddress.includes(kw));
+    
     if (category === 'crossBorder') {
       if (hasHKIsland && destination !== '港島') setDestination('港島');
     } else if (category === 'local') {
@@ -61,6 +68,7 @@ function App() {
     }
   }, [pickupAddress, dropoffAddress, category, destination]);
 
+  // 自動偵測超過 6 人轉 8 人車
   useEffect(() => {
     if (passengerCount > 6) {
       setRequireEightSeater(true);
@@ -74,12 +82,17 @@ function App() {
     if (newCategory === 'crossBorder') setRouteKey('深圳 (南山/福田/羅湖)');
   };
 
+  // 價格計算
   const baseResult = calculatePrice({
     category, routeKey, destination, time, isCrossSea, hours: parseInt(hours, 10), isRemote
   });
 
   const vehicleSurcharge = requireEightSeater ? 300 : 0;
-  const finalRmbTotal = baseResult.total + globalMarkup + vehicleSurcharge;
+  
+  // ⚠️ 核心：記錄價錢表嘅「純底價」(計糧畀司機/晴晴用)
+  const baseRmbPrice = baseResult.total + vehicleSurcharge; 
+  
+  const finalRmbTotal = baseRmbPrice + globalMarkup;
   const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
 
   const rate = pricingData.settings.exchangeRates[currency];
@@ -93,15 +106,22 @@ function App() {
       return alert("請填齊詳細的「上車地址」及「落車地址」！");
     }
     
+    // 防偷雞攔截系統
     if (category === 'crossBorder') {
       const fullAddressToCheck = pickupAddress + ' ' + dropoffAddress;
+      
       if (routeKey.includes('深圳')) {
         const otherCities = ['廣州', '番禺', '東莞', '中山', '佛山', '珠海', '惠州', '澳門'];
         const foundCity = otherCities.find(kw => fullAddressToCheck.includes(kw));
-        if (foundCity) return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
+        if (foundCity) {
+          return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
+        }
       }
+
       if (!routeKey.includes('機場') && ['機場', '寶安', '白雲', 'T1', 'T2', '航站'].some(kw => fullAddressToCheck.includes(kw))) {
-        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) return;
+        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) {
+          return;
+        }
       }
     }
 
@@ -129,6 +149,9 @@ function App() {
         currency: currency,
         markup: globalMarkup,
         paymentMethod: paymentMethod,
+        
+        baseRmbPrice: baseRmbPrice, // 儲存底價，等 Admin.jsx 派單識得計糧
+
         totalAmount: displayTotal,
         depositAmount: displayDeposit,
         receiptUrl: downloadURL,
@@ -141,6 +164,7 @@ function App() {
       alert("✅ 成功落單！老闆會盡快確認並派車。");
       window.location.reload(); 
     } catch (error) {
+      console.error("落單失敗: ", error);
       alert("落單失敗，請聯絡客服。");
     } finally {
       setIsSubmitting(false);
@@ -150,7 +174,7 @@ function App() {
   return (
     <div style={{ maxWidth: '500px', margin: '40px auto', padding: '20px', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', borderRadius: '12px', backgroundColor: '#fff' }}>
       
-      {/* 👇 升級：頂部品牌簡介區 */}
+      {/* 頂部品牌簡介區 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '2px solid #f0f0f0', paddingBottom: '15px' }}>
         <div>
           <h2 style={{ margin: '0 0 5px 0', color: '#1976d2', fontSize: '24px' }}>🚗 三地通 專車服務</h2>
@@ -308,25 +332,18 @@ function App() {
         {isSubmitting ? '上傳及發送訂單中...' : '確認並提交訂單'}
       </button>
 
-      {/* 👇 升級：底部客服支援與社交連結 (Social Links) */}
+      {/* 底部客服支援與社交連結 */}
       <div style={{ marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', textAlign: 'center' }}>
         <p style={{ margin: '0 0 15px 0', color: '#555', fontWeight: 'bold', fontSize: '16px' }}>💬 聯絡客服 / 關注我們</p>
         
         <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
-          {/* ⚠️ 記住將以下 href 入面嘅電話號碼/Link 換做你自己真實嘅資料！ */}
-          
-          {/* WhatsApp: 將 85212345678 換做你嘅電話 */}
-          <a href="https://wa.me/85268786834" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
+          <a href="https://wa.me/85212345678" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
             🟢 WhatsApp
           </a>
-          
-          {/* WeChat (可以 Link 去你公眾號篇文，或者微信客服 QR Code 網頁) */}
-          <a href="https://www.facebook.com/3linkapp/" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
+          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
             💬 微信客服
           </a>
-          
-          {/* Facebook Page */}
-          <a href="https://www.facebook.com/3linkapp/" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
+          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
             📘 Facebook
           </a>
         </div>

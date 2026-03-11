@@ -7,6 +7,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 function Admin() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  
+  // ⚠️ 老闆專屬密碼，隨時可以改
   const ADMIN_SECRET = "888888123"; 
 
   const [activeTab, setActiveTab] = useState('orders'); 
@@ -17,11 +19,14 @@ function Admin() {
   const [markup, setMarkup] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
 
+  // 人事設定 Form
   const [newSalesCode, setNewSalesCode] = useState('');
   const [newSalesPwd, setNewSalesPwd] = useState('');
   const [newSalesCommission, setNewSalesCommission] = useState('20'); 
 
   const [newDriverName, setNewDriverName] = useState('');
+  const [newDriverPwd, setNewDriverPwd] = useState('');
+  
   const [selectedDriverForOrder, setSelectedDriverForOrder] = useState({});
   const [balanceFiles, setBalanceFiles] = useState({});
   const [isUploadingBalance, setIsUploadingBalance] = useState(false);
@@ -58,12 +63,7 @@ function Admin() {
       if (snap.exists()) setMarkup(snap.data().markup || 0); 
     });
 
-    return () => { 
-      unsubOrders(); 
-      unsubWithdraw(); 
-      unsubSales(); 
-      unsubDrivers(); 
-    };
+    return () => { unsubOrders(); unsubWithdraw(); unsubSales(); unsubDrivers(); };
   }, [isLoggedIn]);
 
   const handleSaveMarkup = async () => {
@@ -90,10 +90,15 @@ function Admin() {
   };
 
   const handleAddDriver = async () => {
-    if(!newDriverName) return alert("填司機名！");
-    await addDoc(collection(db, "drivers"), { name: newDriverName });
-    setNewDriverName('');
-    alert("✅ 成功加入新司機！");
+    if(!newDriverName || !newDriverPwd) return alert("填齊司機名同密碼！");
+    // 將司機名作為 Document ID 儲存
+    await setDoc(doc(db, "drivers", newDriverName), { 
+      name: newDriverName, 
+      password: newDriverPwd 
+    });
+    setNewDriverName(''); 
+    setNewDriverPwd('');
+    alert("✅ 成功加入新司機 / 合作夥伴！");
   };
 
   const handleApproveWithdrawal = async (wId) => {
@@ -101,17 +106,34 @@ function Admin() {
     alert("已標記為已打款！");
   };
 
-  const handleAssignDriver = async (orderId) => {
-    const driverName = selectedDriverForOrder[orderId] || "老闆親自出馬";
-    await updateDoc(doc(db, "orders", orderId), { status: `✅ 內部派單 (${driverName})` });
+  // 👇 派單給內部司機 (計糧：底價 - 100)
+  const handleAssignDriver = async (order) => {
+    const driverName = selectedDriverForOrder[order.id] || "老闆親自出馬";
+    let driverEarnings = 0;
+    
+    if (driverName !== "老闆親自出馬") {
+      driverEarnings = (order.baseRmbPrice || 0) - 100; 
+    }
+
+    await updateDoc(doc(db, "orders", order.id), { 
+      status: `✅ 內部派單 (${driverName})`,
+      partnerId: driverName, 
+      partnerEarnings: driverEarnings 
+    });
     alert(`已經將張單派畀：${driverName}！`);
   };
 
+  // 👇 派單給晴晴 (計糧：底價 - 50 - Sales佣金)
   const handleSendToQingQing = async (order) => {
+    const salesUser = salesUsers.find(u => u.id === order.salesCode);
+    const salesComm = salesUser ? (salesUser.commissionRate || 20) : 0;
+    const qingQingEarnings = (order.baseRmbPrice || 0) - 50 - salesComm;
+
     const SEND_KEY = "呢度填方糖SendKey"; 
     const qingQingDeposit = order.depositAmount - ((order.markup || 0) / 2);
+    
     const vehicleText = order.requireEightSeater ? '8人大車' : '標準6人車';
-    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${vehicleText} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **已收訂金(底價):** ¥${qingQingDeposit}`;
+    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${vehicleText} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **結算畀你嘅錢 (淨肉):** ¥${qingQingEarnings}`;
 
     try {
       await fetch(`https://sctapi.ftqq.com/${SEND_KEY}.send`, {
@@ -119,7 +141,12 @@ function Admin() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ title: `🚗 派單: ${order.routeDetail}`, desp: desp })
       });
-      await updateDoc(doc(db, "orders", order.id), { status: '📤 外判給晴晴' });
+      
+      await updateDoc(doc(db, "orders", order.id), { 
+        status: '📤 外判給晴晴',
+        partnerId: 'QINGQING',
+        partnerEarnings: qingQingEarnings
+      });
       alert("✅ 成功派畀晴晴！");
     } catch (e) { 
       alert("發送失敗！"); 
@@ -334,13 +361,13 @@ function Admin() {
                           style={{ padding: '8px', border: 'none', outline: 'none', background: '#e8f5e9' }}
                         >
                           <option value="老闆親自出馬">老闆親自出馬</option>
-                          {drivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                          {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                         <button 
-                          onClick={() => handleAssignDriver(order.id)} 
+                          onClick={() => handleAssignDriver(order)} 
                           style={{ padding: '8px 15px', background: '#4caf50', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}
                         >
-                          🙋‍♂️ 自己接
+                          🙋‍♂️ 內部接單
                         </button>
                       </div>
                       <button 
@@ -392,15 +419,18 @@ function Admin() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           
           <div style={{ background: '#fff9c4', padding: '20px', borderRadius: '8px', border: '1px solid #fbc02d' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 處理 Sales 提現申請</h3>
+            <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 提現申請審批 (Sales / 司機 / 晴晴)</h3>
             {withdrawals.filter(w => w.status.includes('⏳')).map(w => (
               <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '10px' }}>
-                <span><strong>{w.salesCode}</strong> 申請提現：<strong style={{color: 'red'}}>¥{w.amount}</strong></span>
+                <span>
+                  <strong>{w.userId || w.salesCode} {w.role ? `(${w.role})` : ''}</strong> 提現：
+                  <strong style={{color: 'red'}}>¥{w.amount}</strong>
+                </span>
                 <button 
                   onClick={() => handleApproveWithdrawal(w.id)} 
                   style={{ padding: '8px 15px', background: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                 >
-                  ✅ 確認已轉帳
+                  ✅ 確認已打款
                 </button>
               </div>
             ))}
@@ -452,24 +482,36 @@ function Admin() {
             </div>
 
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
-              <h3 style={{ margin: '0 0 15px 0' }}>🚕 車隊司機名單</h3>
+              <h3 style={{ margin: '0 0 15px 0' }}>🚕 開設 司機/晴晴 帳號</h3>
+              <p style={{ margin: '0 0 10px 0', fontSize: '13px', color: '#666' }}>*請建立一個叫「QINGQING」的帳號畀晴晴登入睇數</p>
               <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
                 <input 
                   type="text" 
-                  placeholder="司機名" 
+                  placeholder="登入名稱 (如 QINGQING)" 
                   value={newDriverName} 
                   onChange={e=>setNewDriverName(e.target.value)} 
-                  style={{ width: '75%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                  style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                />
+                <input 
+                  type="text" 
+                  placeholder="登入密碼" 
+                  value={newDriverPwd} 
+                  onChange={e=>setNewDriverPwd(e.target.value)} 
+                  style={{ width: '35%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
                 />
                 <button 
                   onClick={handleAddDriver} 
-                  style={{ width: '25%', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                  style={{ width: '20%', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                 >
-                  加入
+                  新增
                 </button>
               </div>
               <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                {drivers.map(d => <li key={d.id}>{d.name}</li>)}
+                {drivers.map(d => (
+                  <li key={d.id} style={{ marginBottom: '5px' }}>
+                    <strong>{d.name}</strong> (密碼: {d.password})
+                  </li>
+                ))}
               </ul>
             </div>
 
