@@ -1,7 +1,6 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
-import { pricingData } from './pricingData';
-import { calculatePrice } from './priceEngine';
+// ⚠️ 已經唔需要再 import pricingData 啦！所有嘢自動上雲端！
 import { db, storage } from './firebase';
 import { collection, addDoc, serverTimestamp, getDoc, doc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -10,7 +9,6 @@ import Admin from './Admin';
 import Sales from './Sales';
 import Driver from './Driver'; 
 
-// 港島常見地名關鍵字 (用作自動觸發過海費)
 const hkIslandKeywords = [
   '港島', '中環', '上環', '西營盤', '堅尼地城', '西環', '半山', '山頂', '金鐘', 
   '灣仔', '銅鑼灣', '天后', '炮台山', '北角', '鰂魚涌', '太古', '西灣河', '筲箕灣', 
@@ -19,16 +17,19 @@ const hkIslandKeywords = [
 ];
 
 function App() {
-  // 秘道分流器
   if (window.location.pathname === '/admin') return <Admin />;
   if (window.location.pathname === '/sales') return <Sales />;
   if (window.location.pathname === '/driver') return <Driver />; 
 
   const [salesCode, setSalesCode] = useState('');
   const [category, setCategory] = useState('crossBorder'); 
+  
+  // 👇 儲存從 Firebase 讀取嘅路線資料
+  const [routePrices, setRoutePrices] = useState({ crossBorder: {"載入中...": 0}, local: {"載入中...": 0} });
+  const [routeKey, setRouteKey] = useState('');
+
   const [date, setDate] = useState(''); 
   const [time, setTime] = useState('14:00');
-  const [routeKey, setRouteKey] = useState('深圳 (南山/福田/羅湖)');
   const [destination, setDestination] = useState('九龍');
   const [isCrossSea, setIsCrossSea] = useState(false); 
   const [hours, setHours] = useState(3);
@@ -47,20 +48,36 @@ function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [globalMarkup, setGlobalMarkup] = useState(0);
 
-  // 讀取老闆全局加價
+  const trackPixel = (eventType, eventName, data = {}) => {
+    if (window.fbq) window.fbq(eventType, eventName, data);
+  };
+
+  useEffect(() => { trackPixel('track', 'PageView'); }, []);
+
+  // 👇 一入網頁，即刻去 Firebase 拎最新嘅路線同價錢
   useEffect(() => {
-    const fetchMarkup = async () => {
-      const snap = await getDoc(doc(db, "settings", "pricing"));
-      if (snap.exists()) setGlobalMarkup(snap.data().markup || 0);
+    const fetchSettings = async () => {
+      // 拎老闆加價
+      const snapMarkup = await getDoc(doc(db, "settings", "pricing"));
+      if (snapMarkup.exists()) setGlobalMarkup(snapMarkup.data().markup || 0);
+
+      // 拎最新路線
+      const snapRoutes = await getDoc(doc(db, "settings", "routePrices"));
+      if (snapRoutes.exists()) {
+        const fetchedRoutes = snapRoutes.data();
+        setRoutePrices(fetchedRoutes);
+        // 設定預設選項
+        if (fetchedRoutes.crossBorder && Object.keys(fetchedRoutes.crossBorder).length > 0) {
+          setRouteKey(Object.keys(fetchedRoutes.crossBorder)[0]);
+        }
+      }
     };
-    fetchMarkup();
+    fetchSettings();
   }, []);
 
-  // 自動偵測過海
   useEffect(() => {
     const fullAddress = (pickupAddress + ' ' + dropoffAddress).toLowerCase();
     const hasHKIsland = hkIslandKeywords.some(kw => fullAddress.includes(kw));
-    
     if (category === 'crossBorder') {
       if (hasHKIsland && destination !== '港島') setDestination('港島');
     } else if (category === 'local') {
@@ -68,60 +85,72 @@ function App() {
     }
   }, [pickupAddress, dropoffAddress, category, destination]);
 
-  // 自動偵測超過 6 人轉 8 人車
-  useEffect(() => {
-    if (passengerCount > 6) {
-      setRequireEightSeater(true);
-    }
-  }, [passengerCount]);
+  useEffect(() => { if (passengerCount > 6) setRequireEightSeater(true); }, [passengerCount]);
 
   const handleCategoryChange = (e) => {
     const newCategory = e.target.value;
     setCategory(newCategory);
-    if (newCategory === 'local') setRouteKey('九龍-同區');
-    if (newCategory === 'crossBorder') setRouteKey('深圳 (南山/福田/羅湖)');
+    
+    // 轉 Category 嗰陣，自動揀第一個路線
+    if (newCategory !== 'charter') {
+      const firstAvailableRoute = Object.keys(routePrices[newCategory] || {})[0];
+      setRouteKey(firstAvailableRoute || '');
+    }
   };
 
-  // 價格計算
-  const baseResult = calculatePrice({
-    category, routeKey, destination, time, isCrossSea, hours: parseInt(hours, 10), isRemote
-  });
+  // ============================================================
+  // 🧮 內置超級計數機 (完全取代 priceEngine.js，即時讀取雲端價錢)
+  // ============================================================
+  let baseRmbPrice = 0;
+  
+  if (category === 'charter') {
+    // 包車：預設每小時 200 人民幣
+    baseRmbPrice = (hours * 200) + (isRemote ? 200 : 0); 
+  } else {
+    // 點對點：讀取 Firebase 嘅底價
+    baseRmbPrice = routePrices[category]?.[routeKey] || 0;
+    
+    // 判斷過海費
+    let isTollApplied = false;
+    if (category === 'crossBorder' && destination === '港島') isTollApplied = true;
+    if (category === 'local' && isCrossSea) isTollApplied = true;
+    if (isTollApplied) baseRmbPrice += 100;
+    
+    // 判斷深夜附加費 (00:00 - 05:59 加 200)
+    const h = parseInt(time.split(':')[0], 10);
+    if (h >= 0 && h < 6) baseRmbPrice += 200; 
+  }
 
+  // 8人車加成
   const vehicleSurcharge = requireEightSeater ? 300 : 0;
+  baseRmbPrice += vehicleSurcharge;
   
-  // ⚠️ 核心：記錄價錢表嘅「純底價」(計糧畀司機/晴晴用)
-  const baseRmbPrice = baseResult.total + vehicleSurcharge; 
-  
+  // 計算總價
   const finalRmbTotal = baseRmbPrice + globalMarkup;
   const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
 
-  const rate = pricingData.settings.exchangeRates[currency];
-  const symbol = pricingData.settings.currencySymbols[currency];
+  // 匯率換算 (寫死喺度唔使依賴外部檔案)
+  const exchangeRates = { RMB: 1, HKD: 1.08, MOP: 1.11 };
+  const currencySymbols = { RMB: '¥', HKD: 'HK$', MOP: 'MOP$' };
+  
+  const rate = exchangeRates[currency];
+  const symbol = currencySymbols[currency];
   const displayTotal = Math.round(finalRmbTotal * rate);
   const displayDeposit = Math.round(finalRmbDeposit * rate);
 
   const handleSubmit = async () => {
     if (!date) return alert("請選擇用車日期！");
-    if (!pickupAddress.trim() || !dropoffAddress.trim()) {
-      return alert("請填齊詳細的「上車地址」及「落車地址」！");
-    }
+    if (!pickupAddress.trim() || !dropoffAddress.trim()) return alert("請填齊詳細的「上車地址」及「落車地址」！");
     
-    // 防偷雞攔截系統
     if (category === 'crossBorder') {
       const fullAddressToCheck = pickupAddress + ' ' + dropoffAddress;
-      
       if (routeKey.includes('深圳')) {
         const otherCities = ['廣州', '番禺', '東莞', '中山', '佛山', '珠海', '惠州', '澳門'];
         const foundCity = otherCities.find(kw => fullAddressToCheck.includes(kw));
-        if (foundCity) {
-          return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
-        }
+        if (foundCity) return alert(`⚠️ 系統偵測到你的地址位於「${foundCity}」，與所選的「深圳」路線不符！\n請於上方選擇正確的城市路線。`);
       }
-
       if (!routeKey.includes('機場') && ['機場', '寶安', '白雲', 'T1', 'T2', '航站'].some(kw => fullAddressToCheck.includes(kw))) {
-        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) {
-          return;
-        }
+        if (!window.confirm(`⚠️ 系統偵測到你的地址包含「機場」相關字眼。\n請確認是否需要接送機服務？\n(如不是去機場，請按「確定」繼續；否則請按「取消」並更改路線)`)) return;
       }
     }
 
@@ -135,10 +164,12 @@ function App() {
       const snapshot = await uploadBytes(storageRef, receiptFile);
       const downloadURL = await getDownloadURL(snapshot.ref);
 
+      const orderRouteDetail = category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea || destination === '港島'})`;
+
       const orderData = {
         salesCode: salesCode.toUpperCase() || '無',
         category: category,
-        routeDetail: category === 'charter' ? `包車 ${hours} 小時 (偏遠: ${isRemote})` : `${routeKey} -> ${destination} (過海: ${isCrossSea || destination === '港島'})`,
+        routeDetail: orderRouteDetail,
         date: date, 
         time: time,
         detailedAddress: `${pickupAddress} ➡️ ${dropoffAddress}`,
@@ -150,8 +181,8 @@ function App() {
         markup: globalMarkup,
         paymentMethod: paymentMethod,
         
-        baseRmbPrice: baseRmbPrice, // 儲存底價，等 Admin.jsx 派單識得計糧
-
+        baseRmbPrice: baseRmbPrice, 
+        
         totalAmount: displayTotal,
         depositAmount: displayDeposit,
         receiptUrl: downloadURL,
@@ -161,10 +192,18 @@ function App() {
       };
 
       await addDoc(collection(db, "orders"), orderData);
+
+      trackPixel('track', 'Purchase', {
+        value: displayDeposit,
+        currency: currency,
+        content_name: orderRouteDetail,
+        content_category: category,
+        num_items: passengerCount
+      });
+
       alert("✅ 成功落單！老闆會盡快確認並派車。");
       window.location.reload(); 
     } catch (error) {
-      console.error("落單失敗: ", error);
       alert("落單失敗，請聯絡客服。");
     } finally {
       setIsSubmitting(false);
@@ -174,7 +213,6 @@ function App() {
   return (
     <div style={{ maxWidth: '500px', margin: '40px auto', padding: '20px', fontFamily: 'Arial, sans-serif', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', borderRadius: '12px', backgroundColor: '#fff' }}>
       
-      {/* 頂部品牌簡介區 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '2px solid #f0f0f0', paddingBottom: '15px' }}>
         <div>
           <h2 style={{ margin: '0 0 5px 0', color: '#1976d2', fontSize: '24px' }}>🚗 三地通 專車服務</h2>
@@ -220,11 +258,13 @@ function App() {
         ) : (
           <>
             <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>選擇路線: </label>
+            {/* 👇 升級：動態渲染 Firebase 入面嘅路線 */}
             <select value={routeKey} onChange={(e) => setRouteKey(e.target.value)} style={{ width: '100%', padding: '10px', marginBottom: '15px', boxSizing: 'border-box' }}>
-              {Object.keys(pricingData[category]).map(key => (
+              {Object.keys(routePrices[category] || {}).map(key => (
                 <option key={key} value={key}>{key}</option>
               ))}
             </select>
+
             {category === 'crossBorder' && !routeKey.includes('珠海') && !routeKey.includes('澳門') && (
               <>
                 <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>香港目的地: </label>
@@ -234,9 +274,18 @@ function App() {
                 </select>
               </>
             )}
-            {(isCrossSea || destination === '港島') && (category !== 'charter') && (
+            
+            {/* 動態顯示過海提示 */}
+            {( (category === 'crossBorder' && destination === '港島') || (category === 'local' && isCrossSea) ) && (
                <div style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', fontWeight: 'bold' }}>
                  *系統自動偵測地址加上過海附加費 (+¥100)
+               </div>
+            )}
+            
+            {/* 深夜提示 */}
+            {parseInt(time.split(':')[0], 10) >= 0 && parseInt(time.split(':')[0], 10) < 6 && (
+               <div style={{ color: '#1976d2', fontSize: '14px', marginTop: '5px', fontWeight: 'bold' }}>
+                 *深夜時段 (00:00-06:00) 附加費 (+¥200)
                </div>
             )}
           </>
@@ -308,7 +357,14 @@ function App() {
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
               <img src="/alipay.jpg" alt="支付寶 QR Code" style={{ width: '220px', maxWidth: '100%', borderRadius: '8px', border: '1px solid #ddd', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '10px' }} />
               <br />
-              <a href="/alipay.jpg" download="3link_alipay_qr.jpg" style={{ display: 'inline-block', padding: '10px 20px', background: '#1976d2', color: '#fff', textDecoration: 'none', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' }}>⬇️ 一鍵下載 QR Code</a>
+              <a 
+                href="/alipay.jpg" 
+                download="3link_alipay_qr.jpg" 
+                onClick={() => trackPixel('trackCustom', 'DownloadQRCode')}
+                style={{ display: 'inline-block', padding: '10px 20px', background: '#1976d2', color: '#fff', textDecoration: 'none', borderRadius: '6px', fontWeight: 'bold', marginBottom: '15px' }}
+              >
+                ⬇️ 一鍵下載 QR Code
+              </a>
               <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '6px', textAlign: 'left', border: '1px solid #eee' }}>
                 <p style={{ margin: '0 0 8px 0', fontWeight: 'bold', color: '#333' }}>📱 手機付款 3 步教學：</p>
                 <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '14px', color: '#555', lineHeight: '1.6' }}>
@@ -325,29 +381,52 @@ function App() {
 
       <div style={{ marginBottom: '20px' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>上傳付款截圖: <span style={{color:'red'}}>*</span></label>
-        <input type="file" accept="image/*" onChange={(e) => setReceiptFile(e.target.files[0])} style={{ width: '100%', padding: '10px', border: '1px dashed #1976d2', borderRadius: '6px', background: '#f5f5f5' }} />
+        <input 
+          type="file" 
+          accept="image/*" 
+          onChange={(e) => {
+            setReceiptFile(e.target.files[0]);
+            trackPixel('track', 'InitiateCheckout', { value: displayDeposit, currency: currency });
+          }} 
+          style={{ width: '100%', padding: '10px', border: '1px dashed #1976d2', borderRadius: '6px', background: '#f5f5f5' }} 
+        />
       </div>
       
       <button onClick={handleSubmit} disabled={isSubmitting} style={{ width: '100%', padding: '15px', fontSize: '18px', fontWeight: 'bold', background: isSubmitting ? '#ccc' : '#1976d2', color: '#fff', border: 'none', borderRadius: '8px', cursor: isSubmitting ? 'not-allowed' : 'pointer' }}>
         {isSubmitting ? '上傳及發送訂單中...' : '確認並提交訂單'}
       </button>
 
-      {/* 底部客服支援與社交連結 */}
       <div style={{ marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', textAlign: 'center' }}>
         <p style={{ margin: '0 0 15px 0', color: '#555', fontWeight: 'bold', fontSize: '16px' }}>💬 聯絡客服 / 關注我們</p>
-        
         <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', flexWrap: 'wrap' }}>
-          <a href="https://wa.me/85212345678" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}>
+          <a 
+            href="https://wa.me/85212345678" 
+            target="_blank" 
+            rel="noreferrer" 
+            onClick={() => trackPixel('track', 'Contact', { content_name: 'WhatsApp' })}
+            style={{ textDecoration: 'none', background: '#25D366', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(37,211,102,0.3)' }}
+          >
             🟢 WhatsApp
           </a>
-          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}>
+          <a 
+            href="#" 
+            target="_blank" 
+            rel="noreferrer" 
+            onClick={() => trackPixel('track', 'Contact', { content_name: 'WeChat' })}
+            style={{ textDecoration: 'none', background: '#07C160', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(7,193,96,0.3)' }}
+          >
             💬 微信客服
           </a>
-          <a href="#" target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}>
+          <a 
+            href="#" 
+            target="_blank" 
+            rel="noreferrer" 
+            onClick={() => trackPixel('track', 'Contact', { content_name: 'Facebook' })}
+            style={{ textDecoration: 'none', background: '#1877F2', color: 'white', padding: '10px 20px', borderRadius: '30px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px', boxShadow: '0 2px 5px rgba(24,119,242,0.3)' }}
+          >
             📘 Facebook
           </a>
         </div>
-        
         <p style={{ marginTop: '20px', fontSize: '12px', color: '#aaa' }}>© 2026 三地通車隊. All rights reserved.</p>
       </div>
 
