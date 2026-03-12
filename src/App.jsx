@@ -1,6 +1,7 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
-// ⚠️ 已經唔需要再 import pricingData 啦！所有嘢自動上雲端！
+import { pricingData } from './pricingData';
+import { calculatePrice } from './priceEngine';
 import { db, storage } from './firebase';
 import { collection, addDoc, serverTimestamp, getDoc, doc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -24,7 +25,6 @@ function App() {
   const [salesCode, setSalesCode] = useState('');
   const [category, setCategory] = useState('crossBorder'); 
   
-  // 👇 儲存從 Firebase 讀取嘅路線資料
   const [routePrices, setRoutePrices] = useState({ crossBorder: {"載入中...": 0}, local: {"載入中...": 0} });
   const [routeKey, setRouteKey] = useState('');
 
@@ -35,6 +35,8 @@ function App() {
   const [hours, setHours] = useState(3);
   const [isRemote, setIsRemote] = useState(false);
   const [currency, setCurrency] = useState('RMB');
+  
+  // 付款方式狀態 (預設支付寶，但而家多咗 FPS 可以揀)
   const [paymentMethod, setPaymentMethod] = useState('AlipayCN');
 
   const [pickupAddress, setPickupAddress] = useState('');
@@ -54,19 +56,15 @@ function App() {
 
   useEffect(() => { trackPixel('track', 'PageView'); }, []);
 
-  // 👇 一入網頁，即刻去 Firebase 拎最新嘅路線同價錢
   useEffect(() => {
     const fetchSettings = async () => {
-      // 拎老闆加價
       const snapMarkup = await getDoc(doc(db, "settings", "pricing"));
       if (snapMarkup.exists()) setGlobalMarkup(snapMarkup.data().markup || 0);
 
-      // 拎最新路線
       const snapRoutes = await getDoc(doc(db, "settings", "routePrices"));
       if (snapRoutes.exists()) {
         const fetchedRoutes = snapRoutes.data();
         setRoutePrices(fetchedRoutes);
-        // 設定預設選項
         if (fetchedRoutes.crossBorder && Object.keys(fetchedRoutes.crossBorder).length > 0) {
           setRouteKey(Object.keys(fetchedRoutes.crossBorder)[0]);
         }
@@ -91,45 +89,33 @@ function App() {
     const newCategory = e.target.value;
     setCategory(newCategory);
     
-    // 轉 Category 嗰陣，自動揀第一個路線
     if (newCategory !== 'charter') {
       const firstAvailableRoute = Object.keys(routePrices[newCategory] || {})[0];
       setRouteKey(firstAvailableRoute || '');
     }
   };
 
-  // ============================================================
-  // 🧮 內置超級計數機 (完全取代 priceEngine.js，即時讀取雲端價錢)
-  // ============================================================
+  // 內置計數機
   let baseRmbPrice = 0;
   
   if (category === 'charter') {
-    // 包車：預設每小時 200 人民幣
     baseRmbPrice = (hours * 200) + (isRemote ? 200 : 0); 
   } else {
-    // 點對點：讀取 Firebase 嘅底價
     baseRmbPrice = routePrices[category]?.[routeKey] || 0;
-    
-    // 判斷過海費
     let isTollApplied = false;
     if (category === 'crossBorder' && destination === '港島') isTollApplied = true;
     if (category === 'local' && isCrossSea) isTollApplied = true;
     if (isTollApplied) baseRmbPrice += 100;
-    
-    // 判斷深夜附加費 (00:00 - 05:59 加 200)
     const h = parseInt(time.split(':')[0], 10);
     if (h >= 0 && h < 6) baseRmbPrice += 200; 
   }
 
-  // 8人車加成
   const vehicleSurcharge = requireEightSeater ? 300 : 0;
   baseRmbPrice += vehicleSurcharge;
   
-  // 計算總價
   const finalRmbTotal = baseRmbPrice + globalMarkup;
   const finalRmbDeposit = Math.round(finalRmbTotal * 0.5);
 
-  // 匯率換算 (寫死喺度唔使依賴外部檔案)
   const exchangeRates = { RMB: 1, HKD: 1.08, MOP: 1.11 };
   const currencySymbols = { RMB: '¥', HKD: 'HK$', MOP: 'MOP$' };
   
@@ -180,9 +166,7 @@ function App() {
         currency: currency,
         markup: globalMarkup,
         paymentMethod: paymentMethod,
-        
         baseRmbPrice: baseRmbPrice, 
-        
         totalAmount: displayTotal,
         depositAmount: displayDeposit,
         receiptUrl: downloadURL,
@@ -258,7 +242,6 @@ function App() {
         ) : (
           <>
             <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>選擇路線: </label>
-            {/* 👇 升級：動態渲染 Firebase 入面嘅路線 */}
             <select value={routeKey} onChange={(e) => setRouteKey(e.target.value)} style={{ width: '100%', padding: '10px', marginBottom: '15px', boxSizing: 'border-box' }}>
               {Object.keys(routePrices[category] || {}).map(key => (
                 <option key={key} value={key}>{key}</option>
@@ -275,14 +258,12 @@ function App() {
               </>
             )}
             
-            {/* 動態顯示過海提示 */}
             {( (category === 'crossBorder' && destination === '港島') || (category === 'local' && isCrossSea) ) && (
                <div style={{ color: '#d32f2f', fontSize: '14px', marginTop: '10px', fontWeight: 'bold' }}>
                  *系統自動偵測地址加上過海附加費 (+¥100)
                </div>
             )}
             
-            {/* 深夜提示 */}
             {parseInt(time.split(':')[0], 10) >= 0 && parseInt(time.split(':')[0], 10) < 6 && (
                <div style={{ color: '#1976d2', fontSize: '14px', marginTop: '5px', fontWeight: 'bold' }}>
                  *深夜時段 (00:00-06:00) 附加費 (+¥200)
@@ -345,13 +326,19 @@ function App() {
         <h3 style={{ margin: 0, color: '#d32f2f' }}>✅ 需付 50% 訂金: {symbol} {displayDeposit}</h3>
       </div>
 
+      {/* 👇 付款方式選擇區 */}
       <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #64b5f6' }}>
         <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '10px', color: '#1565c0' }}>💳 付款方式:</label>
-        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#f5f5f5' }}>
+        
+        {/* 加入 FPS 選項 */}
+        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '15px', fontSize: '16px', background: '#fff' }}>
           <option value="AlipayCN">🇨🇳 內地支付寶 (Alipay)</option>
+          <option value="FPS">🇭🇰 轉數快 (FPS)</option>
         </select>
 
         <div style={{ padding: '15px', background: '#fff', borderRadius: '6px', border: '1px dashed #64b5f6', textAlign: 'center' }}>
+          
+          {/* 支付寶顯示邏輯 */}
           {paymentMethod === 'AlipayCN' && (
             <div>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', fontWeight: 'bold' }}>戶口名稱: YY (**宜)</p>
@@ -374,6 +361,21 @@ function App() {
                 </ol>
               </div>
               <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>*請轉帳 <span style={{ fontSize: '18px' }}>¥ {finalRmbDeposit}</span> 人民幣，並截圖上傳。</p>
+            </div>
+          )}
+
+          {/* 👇 新增：FPS 顯示邏輯 */}
+          {paymentMethod === 'FPS' && (
+            <div>
+              <div style={{ background: '#f9f9f9', padding: '20px', borderRadius: '8px', border: '1px solid #eee', marginBottom: '15px' }}>
+                <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#666' }}>轉數快號碼 (FPS ID)</p>
+                <p style={{ margin: '0', fontSize: '28px', fontWeight: 'bold', color: '#1976d2', letterSpacing: '2px' }}>
+                  105517742
+                </p>
+              </div>
+              <p style={{ margin: '15px 0 0 0', fontSize: '15px', color: '#d32f2f', fontWeight: 'bold' }}>
+                *請轉帳 <span style={{ fontSize: '18px' }}>{symbol} {displayDeposit}</span>，並截圖上傳。
+              </p>
             </div>
           )}
         </div>
