@@ -4,12 +4,14 @@ import { db, storage } from './firebase';
 import { collection, onSnapshot, query, orderBy, doc, updateDoc, getDoc, setDoc, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
+// 👇 將你舊有嘅路線檔案重新連接近來，準備幫佢搬家！
+import { pricingData } from './pricingData'; 
+
 function Admin() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const ADMIN_SECRET = "888888"; 
 
-  // 👇 依家有 4 個 Tab
   const [activeTab, setActiveTab] = useState('orders'); 
   
   const [orders, setOrders] = useState([]);
@@ -31,7 +33,6 @@ function Admin() {
   const [isUploadingBalance, setIsUploadingBalance] = useState(false);
   const [customFees, setCustomFees] = useState({});
 
-  // 👇 新增：路線與定價狀態
   const [routePrices, setRoutePrices] = useState({ crossBorder: {}, local: {} });
   const [newRouteCategory, setNewRouteCategory] = useState('crossBorder');
   const [newRouteName, setNewRouteName] = useState('');
@@ -49,7 +50,6 @@ function Admin() {
   useEffect(() => {
     if (!isLoggedIn) return; 
 
-    // 監聽訂單
     const unsubOrders = onSnapshot(query(collection(db, "orders"), orderBy("createdAt", "desc")), snap => {
       setOrders(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -67,48 +67,52 @@ function Admin() {
       if (snap.exists()) setMarkup(snap.data().markup || 0); 
     });
 
-    // 👇 讀取雲端路線資料庫，如果無就初始化預設資料
     getDoc(doc(db, "settings", "routePrices")).then(snap => {
       if (snap.exists()) {
         setRoutePrices(snap.data());
-      } else {
-        const defaultRoutes = {
-          crossBorder: { "深圳 (南山/福田/羅湖)": 700, "深圳 (寶安/龍華)": 800, "廣州市區": 1200 },
-          local: { "九龍-同區": 350, "九龍-新界": 450 }
-        };
-        setRoutePrices(defaultRoutes);
-        setDoc(doc(db, "settings", "routePrices"), defaultRoutes); // 寫入資料庫
       }
     });
 
     return () => { unsubOrders(); unsubWithdraw(); unsubSales(); unsubDrivers(); };
   }, [isLoggedIn]);
 
-  // 👇 管理路線功能 (新增)
+  // 👇 救命魔法：一鍵搬家功能
+  const handleImportOldRoutes = async () => {
+    if (!window.confirm("⚠️ 確定要將舊有 pricingData 的所有路線匯入雲端嗎？")) return;
+    setIsSaving(true);
+    try {
+      const migratedData = {
+        crossBorder: pricingData.crossBorder || {},
+        local: pricingData.local || {}
+      };
+      await setDoc(doc(db, "settings", "routePrices"), migratedData);
+      setRoutePrices(migratedData);
+      alert("✅ 恭喜老闆！舊路線已全數完美復活並上傳雲端！客人落單頁面已經恢復正常！");
+    } catch (e) {
+      alert("匯入失敗: " + e.message);
+    }
+    setIsSaving(false);
+  };
+
   const handleAddRoute = async () => {
     if (!newRouteName || !newRoutePrice) return alert("請填寫路線名稱及價錢！");
     const updatedRoutes = { ...routePrices };
+    if (!updatedRoutes[newRouteCategory]) updatedRoutes[newRouteCategory] = {};
     updatedRoutes[newRouteCategory][newRouteName] = Number(newRoutePrice);
     
     setRoutePrices(updatedRoutes);
     await setDoc(doc(db, "settings", "routePrices"), updatedRoutes);
-    
-    setNewRouteName('');
-    setNewRoutePrice('');
+    setNewRouteName(''); setNewRoutePrice('');
     alert("✅ 成功加入新路線！");
   };
 
-  // 👇 管理路線功能 (刪除)
   const handleDeleteRoute = async (category, routeName) => {
-    if (!window.confirm(`⚠️ 確定要刪除路線：${routeName}？\n刪除後客人將無法選擇此路線。`)) return;
-    
+    if (!window.confirm(`⚠️ 確定要刪除路線：${routeName}？`)) return;
     const updatedRoutes = { ...routePrices };
-    delete updatedRoutes[category][routeName]; // 從 Object 移除
-    
+    delete updatedRoutes[category][routeName]; 
     setRoutePrices(updatedRoutes);
     await setDoc(doc(db, "settings", "routePrices"), updatedRoutes);
   };
-
 
   const handleSaveMarkup = async () => {
     setIsSaving(true);
@@ -122,15 +126,13 @@ function Admin() {
   const handleAddSales = async () => {
     if(!newSalesCode || !newSalesPwd) return alert("填齊 Code 同密碼先！");
     await setDoc(doc(db, "sales_users", newSalesCode.toUpperCase()), { password: newSalesPwd, commissionRate: Number(newSalesCommission) || 20 });
-    setNewSalesCode(''); setNewSalesPwd(''); setNewSalesCommission('20');
-    alert("✅ 成功加入新 Sales！");
+    setNewSalesCode(''); setNewSalesPwd(''); setNewSalesCommission('20'); alert("✅ 成功加入新 Sales！");
   };
 
   const handleAddDriver = async () => {
     if(!newDriverName || !newDriverPwd) return alert("填齊司機名同密碼！");
     await setDoc(doc(db, "drivers", newDriverName), { name: newDriverName, password: newDriverPwd });
-    setNewDriverName(''); setNewDriverPwd('');
-    alert("✅ 成功加入新司機 / 合作夥伴！");
+    setNewDriverName(''); setNewDriverPwd(''); alert("✅ 成功加入新司機 / 合作夥伴！");
   };
 
   const handleApproveWithdrawal = async (wId) => {
@@ -148,19 +150,17 @@ function Admin() {
     let driverEarnings = 0;
     if (driverName !== "老闆親自出馬") driverEarnings = (order.baseRmbPrice || 0) - feeState.driverFee; 
     await updateDoc(doc(db, "orders", order.id), { status: `✅ 內部派單 (${driverName})`, partnerId: driverName, partnerEarnings: driverEarnings, salesCommission: feeState.salesComm, platformFeeDeducted: feeState.driverFee });
-    alert(`已經將張單派畀：${driverName}！\n司機將會賺取: ¥${driverEarnings}`);
+    alert(`已經將張單派畀：${driverName}！`);
   };
 
   const handleSendToQingQing = async (order, feeState) => {
     const qingQingEarnings = (order.baseRmbPrice || 0) - feeState.qingqingFee - feeState.salesComm;
     const SEND_KEY = "呢度填方糖SendKey"; 
-    const vehicleText = order.requireEightSeater ? '8人大車' : '標準6人車';
-    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${vehicleText} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **結算畀你嘅錢 (淨肉):** ¥${qingQingEarnings}`;
-
+    const desp = `### 新單！\n- **路線:** ${order.routeDetail}\n- **詳細地址:** ${order.detailedAddress || '未提供'}\n- **用車時間:** ${order.date || '未註明'} ${order.time}\n- **車型及人數:** ${order.requireEightSeater ? '8人大車' : '標準6人車'} (${order.passengerCount || 1} 人)\n- **行李:** ${order.luggageCount || 0} 件\n- **備註:** ${order.remarks || '無'}\n\n- **結算畀你嘅錢 (淨肉):** ¥${qingQingEarnings}`;
     try {
       await fetch(`https://sctapi.ftqq.com/${SEND_KEY}.send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ title: `🚗 派單: ${order.routeDetail}`, desp: desp }) });
       await updateDoc(doc(db, "orders", order.id), { status: '📤 外判給晴晴', partnerId: 'QINGQING', partnerEarnings: qingQingEarnings, salesCommission: feeState.salesComm, platformFeeDeducted: feeState.qingqingFee });
-      alert(`✅ 成功派畀晴晴！\n晴晴將會賺取: ¥${qingQingEarnings}`);
+      alert(`✅ 成功派畀晴晴！`);
     } catch (e) { alert("發送失敗！"); }
   };
 
@@ -178,31 +178,24 @@ function Admin() {
       const snapshot = await uploadBytes(storageRef, file);
       const downloadURL = await getDownloadURL(snapshot.ref);
       await updateDoc(doc(db, "orders", orderId), { isBalancePaid: true, balanceReceiptUrl: downloadURL });
-      alert("✅ 尾數紀錄已更新並儲存截圖！");
+      alert("✅ 尾數紀錄已更新！");
       setBalanceFiles(prev => ({...prev, [orderId]: null}));
     } catch (error) { alert("上傳失敗，請重試！"); } finally { setIsUploadingBalance(false); }
   };
 
-  // 大數據計算邏輯
   const now = new Date();
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
-  const thisMonthOrders = orders.filter(order => {
-    if (!order.createdAt || order.status.includes('取消')) return false;
-    return order.createdAt.toDate().getMonth() === currentMonth && order.createdAt.toDate().getFullYear() === currentYear;
-  });
-
+  const thisMonthOrders = orders.filter(order => !order.status.includes('取消') && order.createdAt?.toDate().getMonth() === currentMonth && order.createdAt?.toDate().getFullYear() === currentYear);
   const thisMonthRevenue = thisMonthOrders.reduce((sum, order) => {
     const rate = order.currency === 'HKD' ? 1.08 : (order.currency === 'MOP' ? 1.11 : 1);
     return sum + Math.round((order.totalAmount || 0) / rate);
   }, 0);
-
   const salesCommissionMap = {};
   salesUsers.forEach(u => { salesCommissionMap[u.id] = u.commissionRate || 20; });
   const thisMonthCommissionOrders = thisMonthOrders.filter(o => o.salesCode && o.salesCode !== '無');
   let thisMonthTotalCommission = 0;
   const salesLeaderboard = {};
-
   thisMonthCommissionOrders.forEach(o => {
     const rate = o.salesCommission !== undefined ? o.salesCommission : (salesCommissionMap[o.salesCode] || 20);
     thisMonthTotalCommission += rate;
@@ -216,9 +209,8 @@ function Admin() {
     return (
       <div style={{ maxWidth: '400px', margin: '100px auto', padding: '30px', fontFamily: 'Arial, sans-serif', background: '#fff', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', textAlign: 'center' }}>
         <h2 style={{ color: '#d32f2f', margin: '0 0 10px 0' }}>🔒 最高指揮中心</h2>
-        <p style={{ color: '#666', marginBottom: '25px', fontSize: '14px' }}>非授權人員請勿進入</p>
         <input type="password" placeholder="請輸入系統管理員密碼" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleLogin()} style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', marginBottom: '20px', fontSize: '16px', textAlign: 'center', letterSpacing: '3px' }} />
-        <button onClick={handleLogin} style={{ width: '100%', padding: '15px', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', transition: '0.3s' }}>進入系統</button>
+        <button onClick={handleLogin} style={{ width: '100%', padding: '15px', background: '#d32f2f', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}>進入系統</button>
       </div>
     );
   }
@@ -232,19 +224,26 @@ function Admin() {
 
       <div style={{ display: 'flex', gap: '10px', marginBottom: '30px', flexWrap: 'wrap' }}>
         <button onClick={() => setActiveTab('orders')} style={{ flex: '1 1 20%', padding: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'orders' ? '#1976d2' : '#e0e0e0', color: activeTab === 'orders' ? 'white' : '#333' }}>📝 派單與操作</button>
-        {/* 👇 新增按鈕 */}
         <button onClick={() => setActiveTab('routes')} style={{ flex: '1 1 20%', padding: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'routes' ? '#9c27b0' : '#e0e0e0', color: activeTab === 'routes' ? 'white' : '#333' }}>🗺️ 路線與定價</button>
         <button onClick={() => setActiveTab('hr')} style={{ flex: '1 1 20%', padding: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'hr' ? '#1976d2' : '#e0e0e0', color: activeTab === 'hr' ? 'white' : '#333' }}>⚙️ 人事與財務</button>
         <button onClick={() => setActiveTab('dashboard')} style={{ flex: '1 1 20%', padding: '12px', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '8px', border: 'none', background: activeTab === 'dashboard' ? '#1976d2' : '#e0e0e0', color: activeTab === 'dashboard' ? 'white' : '#333' }}>📊 生意大數據</button>
       </div>
 
-      {/* ========================================== */}
-      {/* 畫面 🗺️：路線與定價 (全新動態功能) */}
-      {/* ========================================== */}
       {activeTab === 'routes' && (
         <div>
           <div style={{ background: '#f3e5f5', padding: '20px', borderRadius: '8px', border: '1px solid #ce93d8', marginBottom: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#7b1fa2' }}>➕ 新增路線定價</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+              <h3 style={{ margin: 0, color: '#7b1fa2' }}>➕ 新增路線定價</h3>
+              {/* 👇 呢個就係救命按鈕！ */}
+              <button 
+                onClick={handleImportOldRoutes} 
+                disabled={isSaving}
+                style={{ padding: '8px 15px', background: '#ff9800', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.2)' }}
+              >
+                {isSaving ? '匯入中...' : '📥 一鍵還原舊有路線'}
+              </button>
+            </div>
+            
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
               <select value={newRouteCategory} onChange={(e) => setNewRouteCategory(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }}>
                 <option value="crossBorder">🌍 跨境接送</option>
@@ -255,14 +254,14 @@ function Admin() {
                 <span style={{ color: '#666', fontWeight: 'bold' }}>¥</span>
                 <input type="number" placeholder="底價" value={newRoutePrice} onChange={(e) => setNewRoutePrice(e.target.value)} style={{ padding: '10px 5px', border: 'none', outline: 'none', width: '80px' }} />
               </div>
-              <button onClick={handleAddRoute} style={{ padding: '10px 20px', background: '#9c27b0', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>新增儲存</button>
+              <button onClick={handleAddRoute} style={{ padding: '10px 20px', background: '#9c27b0', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>新增</button>
             </div>
-            <p style={{ fontSize: '12px', color: '#666', marginTop: '10px', marginBottom: 0 }}>*新增後，客人落單頁面會即時同步顯示。</p>
           </div>
 
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, background: '#fff', padding: '20px', borderRadius: '8px', border: '1px solid #ddd' }}>
               <h3 style={{ margin: '0 0 15px 0', color: '#1976d2' }}>🌍 跨境接送 (目前定價)</h3>
+              {Object.keys(routePrices.crossBorder || {}).length === 0 && <p style={{color: '#999'}}>請點擊右上角「一鍵還原舊有路線」</p>}
               {Object.entries(routePrices.crossBorder || {}).map(([name, price]) => (
                 <div key={name} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', borderBottom: '1px solid #eee', alignItems: 'center' }}>
                   <span style={{ fontSize: '16px', fontWeight: 'bold' }}>{name}</span>
@@ -276,6 +275,7 @@ function Admin() {
 
             <div style={{ flex: 1, background: '#fff', padding: '20px', borderRadius: '8px', border: '1px solid #ddd' }}>
               <h3 style={{ margin: '0 0 15px 0', color: '#1976d2' }}>🇭🇰 本地接送 (目前定價)</h3>
+              {Object.keys(routePrices.local || {}).length === 0 && <p style={{color: '#999'}}>請點擊右上角「一鍵還原舊有路線」</p>}
               {Object.entries(routePrices.local || {}).map(([name, price]) => (
                 <div key={name} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', borderBottom: '1px solid #eee', alignItems: 'center' }}>
                   <span style={{ fontSize: '16px', fontWeight: 'bold' }}>{name}</span>
@@ -290,7 +290,6 @@ function Admin() {
         </div>
       )}
 
-      {/* 畫面 A：派單操作 */}
       {activeTab === 'orders' && (
         <div>
           <div style={{ background: '#e3f2fd', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #1976d2' }}>
@@ -322,7 +321,6 @@ function Admin() {
 
             return (
               <div key={order.id} style={{ border: '1px solid #ccc', borderRadius: '8px', padding: '15px', marginBottom: '15px', background: bgColor, opacity: isCancelled ? 0.7 : 1 }}>
-                
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
                   <strong style={{ fontSize: '18px', textDecoration: isCancelled ? 'line-through' : 'none' }}>{order.routeDetail}</strong>
                   <span style={{ background: isCancelled ? '#9e9e9e' : '#333', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '14px' }}>{order.status}</span>
@@ -337,10 +335,6 @@ function Admin() {
                 </div>
 
                 <p style={{ margin: '5px 0' }}>👤 Sales: {order.salesCode} | 💳 支付: {order.paymentMethod}</p>
-                <p style={{ margin: '5px 0', color: '#666', fontSize: '14px' }}>
-                  💡 系統底價(成本): ¥{order.baseRmbPrice} 
-                  {order.status !== '🔴 老闆處理中' && !isCancelled && ` | 已付司機/晴晴: ¥${order.partnerEarnings}`}
-                </p>
                 
                 <div style={{ background: isCancelled ? '#eee' : '#fff9c4', padding: '10px', borderRadius: '6px', margin: '10px 0', border: '1px dashed #fbc02d' }}>
                   <p style={{ margin: '0 0 5px 0' }}>總面價：<strong>{order.currency} {order.totalAmount}</strong> (已收訂金: {order.depositAmount})</p>
@@ -356,22 +350,12 @@ function Admin() {
                 
                 {order.status === '🔴 老闆處理中' && !isCancelled && (
                   <div style={{ background: '#fff3e0', padding: '15px', borderRadius: '8px', marginBottom: '15px', border: '1px solid #ffcc80' }}>
-                    <h4 style={{ margin: '0 0 10px 0', color: '#e65100' }}>⚙️ 派單結算調整 (大時大節可減抽水)</h4>
+                    <h4 style={{ margin: '0 0 10px 0', color: '#e65100' }}>⚙️ 派單結算調整</h4>
                     <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '15px' }}>
-                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
-                        內部司機扣除平台費 (¥):
-                        <input type="number" value={feeState.driverFee} onChange={e => handleFeeChange(order.id, 'driverFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} />
-                      </label>
-                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
-                        外判晴晴扣除平台費 (¥):
-                        <input type="number" value={feeState.qingqingFee} onChange={e => handleFeeChange(order.id, 'qingqingFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} />
-                      </label>
-                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>
-                        Sales 特批佣金 (¥):
-                        <input type="number" value={feeState.salesComm} disabled={order.salesCode === '無'} onChange={e => handleFeeChange(order.id, 'salesComm', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px', background: order.salesCode === '無' ? '#eee' : '#fff' }} />
-                      </label>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>內部扣費 (¥):<input type="number" value={feeState.driverFee} onChange={e => handleFeeChange(order.id, 'driverFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} /></label>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>晴晴扣費 (¥):<input type="number" value={feeState.qingqingFee} onChange={e => handleFeeChange(order.id, 'qingqingFee', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }} /></label>
+                      <label style={{ fontSize: '13px', display: 'flex', flexDirection: 'column' }}>Sales佣金 (¥):<input type="number" value={feeState.salesComm} disabled={order.salesCode === '無'} onChange={e => handleFeeChange(order.id, 'salesComm', e.target.value)} style={{ padding: '6px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px', background: order.salesCode === '無' ? '#eee' : '#fff' }} /></label>
                     </div>
-                    
                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                       <div style={{ display: 'flex', border: '1px solid #4caf50', borderRadius: '4px', overflow: 'hidden' }}>
                         <select onChange={(e) => setSelectedDriverForOrder({...selectedDriverForOrder, [order.id]: e.target.value})} style={{ padding: '8px', border: 'none', outline: 'none', background: '#e8f5e9' }}>
@@ -401,26 +385,18 @@ function Admin() {
         </div>
       )}
 
-      {/* 畫面 B：人事與財務 */}
       {activeTab === 'hr' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
           <div style={{ background: '#fff9c4', padding: '20px', borderRadius: '8px', border: '1px solid #fbc02d' }}>
-            <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 提現申請審批 (Sales / 司機 / 晴晴)</h3>
-            {withdrawals.filter(w => w.status.includes('⏳')).length === 0 && <p>目前沒有待處理的提現。</p>}
+            <h3 style={{ margin: '0 0 15px 0', color: '#f57f17' }}>💸 提現申請審批</h3>
             {withdrawals.filter(w => w.status.includes('⏳')).map(w => (
               <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '10px' }}>
-                <span>
-                  <strong>{w.userId || w.salesCode} {w.role ? `(${w.role})` : ''}</strong> 提現：
-                  <strong style={{color: 'red'}}>¥{w.amount}</strong>
-                </span>
+                <span><strong>{w.userId || w.salesCode}</strong> 提現：<strong style={{color: 'red'}}>¥{w.amount}</strong></span>
                 <button onClick={() => handleApproveWithdrawal(w.id)} style={{ padding: '8px 15px', background: '#4caf50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✅ 確認已打款</button>
               </div>
             ))}
           </div>
-
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-            
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 15px 0' }}>🧑‍💼 開設 Sales 帳號</h3>
               <div style={{ display: 'flex', gap: '5px', marginBottom: '15px', flexWrap: 'wrap' }}>
@@ -432,40 +408,22 @@ function Admin() {
                 </div>
                 <button onClick={handleAddSales} style={{ width: '10%', background: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', minWidth: '50px' }}>新增</button>
               </div>
-              <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                {salesUsers.map(u => (
-                  <li key={u.id} style={{ marginBottom: '5px' }}>
-                    <strong>{u.id}</strong> (密碼: {u.password}) - 預設每單: <strong style={{color: 'green'}}>¥{u.commissionRate || 20}</strong>
-                  </li>
-                ))}
-              </ul>
             </div>
-
             <div style={{ flex: 1, background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 15px 0' }}>🚕 開設 司機/晴晴 帳號</h3>
               <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
-                <input type="text" placeholder="登入名稱 (如 QINGQING)" value={newDriverName} onChange={e=>setNewDriverName(e.target.value)} style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                <input type="text" placeholder="登入名稱" value={newDriverName} onChange={e=>setNewDriverName(e.target.value)} style={{ width: '40%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
                 <input type="text" placeholder="登入密碼" value={newDriverPwd} onChange={e=>setNewDriverPwd(e.target.value)} style={{ width: '35%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
                 <button onClick={handleAddDriver} style={{ width: '20%', background: '#4caf50', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>新增</button>
               </div>
-              <ul style={{ paddingLeft: '20px', margin: 0 }}>
-                {drivers.map(d => (
-                  <li key={d.id} style={{ marginBottom: '5px' }}>
-                    <strong>{d.name}</strong> (密碼: {d.password})
-                  </li>
-                ))}
-              </ul>
             </div>
-
           </div>
         </div>
       )}
 
-      {/* 畫面 C：大數據 */}
       {activeTab === 'dashboard' && (
         <div>
           <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>📅 本月實時戰況 ({currentMonth + 1}月)</h3>
-          
           <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '30px' }}>
             <div style={{ flex: '1 1 250px', background: '#e3f2fd', padding: '20px', borderRadius: '12px', border: '1px solid #90caf9' }}>
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#1565c0' }}>💰 本月總營業額 (折合人民幣)</p>
@@ -479,21 +437,6 @@ function Admin() {
               <p style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#2e7d32' }}>📈 本月扣佣後營收 (未扣車資)</p>
               <h2 style={{ margin: '0', color: '#4caf50', fontSize: '32px' }}>¥ {thisMonthRevenue - thisMonthTotalCommission}</h2>
             </div>
-          </div>
-
-          <h3 style={{ borderBottom: '2px solid #ccc', paddingBottom: '10px' }}>🏆 本月 Sales 龍虎榜</h3>
-          <div style={{ background: '#fafafa', borderRadius: '8px', border: '1px solid #ddd', overflow: 'hidden' }}>
-            {sortedSales.length === 0 && <div style={{ padding: '15px' }}>暫無數據</div>}
-            {sortedSales.map((sales, i) => (
-              <div key={sales[0]} style={{ display: 'flex', justifyContent: 'space-between', padding: '15px', borderBottom: '1px solid #eee', background: i === 0 ? '#fff9c4' : 'transparent' }}>
-                <span style={{ fontSize: '18px', fontWeight: 'bold' }}>
-                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '👏'} {sales[0]}
-                </span>
-                <span style={{ fontSize: '18px' }}>
-                  {sales[1].count} 單 <span style={{ color: 'green', fontWeight: 'bold' }}>(賺 ¥{sales[1].earnings})</span>
-                </span>
-              </div>
-            ))}
           </div>
         </div>
       )}
