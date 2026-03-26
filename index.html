@@ -15,13 +15,14 @@
   t.src=v;s=b.getElementsByTagName(e)[0];
   s.parentNode.insertBefore(t,s)}(window, document,'script',
   'https://connect.facebook.net/en_US/fbevents.js');
-  fbq('init', '802306039592362'); // 👈 換成你的 Pixel ID
+  
+  fbq('init', '802306039592362'); 
+  fbq('track', 'PageView'); // 👈 加返呢句喚醒 Pixel！
 </script>
 <noscript><img height="1" width="1" style="display:none"
-  src="https://www.facebook.com/tr?id=802306039592362_ID&ev=PageView&noscript=1"
+  src="https://www.facebook.com/tr?id=802306039592362&ev=PageView&noscript=1"
 /></noscript>
-
-  </head>
+</head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
